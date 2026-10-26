@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import ReactFlow, {
   addEdge,
   Background,
@@ -11,7 +11,7 @@ import ReactFlow, {
   Handle,
   Position,
 } from 'reactflow';
-import type { Connection, Edge, Node } from 'reactflow';
+import type { Connection, Node } from 'reactflow';
 import 'reactflow/dist/style.css';
 import './App.css';
 
@@ -20,7 +20,6 @@ type Department = {
   number: string;
   rate: number;
 };
-
 type Person = {
   id: string;
   name: string;
@@ -28,20 +27,17 @@ type Person = {
   defaultAllocation: number;
   startDate?: string;
 };
-
 type TaskTemplate = {
   id: string;
   name: string;
   estimatedHours: number;
 };
-
 type TaskData = {
   label: string;
   personId?: string;
   estimatedHours?: number;
   percentComplete?: number;
 };
-
 type ScheduledTask = {
   id: string;
   label: string;
@@ -51,7 +47,6 @@ type ScheduledTask = {
   hours: number;
   pct: number;
 };
-
 type Baseline = {
   id: string;
   name: string;
@@ -65,12 +60,10 @@ const defaultDepartments: Department[] = [
   { id: 'd1', number: '100', rate: 85 },
   { id: 'd2', number: '200', rate: 70 },
 ];
-
 const defaultPeople: Person[] = [
   { id: 'p1', name: 'Alex', departmentId: 'd1', defaultAllocation: 0.8, startDate: '2026-01-06' },
   { id: 'p2', name: 'Jordan', departmentId: 'd2', defaultAllocation: 1.0, startDate: '2026-01-06' },
 ];
-
 const defaultTemplates: TaskTemplate[] = [
   { id: 't1', name: 'Design Review', estimatedHours: 8 },
   { id: 't2', name: 'Code Module', estimatedHours: 16 },
@@ -180,7 +173,6 @@ function loadSaved() {
 
 export default function App() {
   const saved = loadSaved();
-
   const [nodes, setNodes, onNodesChange] = useNodesState(saved?.nodes || defaultNodes);
   const [edges, setEdges, onEdgesChange] = useEdgesState(saved?.edges || []);
   const [departments, setDepartments] = useState<Department[]>(saved?.departments || defaultDepartments);
@@ -197,7 +189,6 @@ export default function App() {
   const [linkType, setLinkType] = useState<'horizontal' | 'vertical'>('horizontal');
   const [history, setHistory] = useState<any[]>([]);
 
-  // Push state to history before changes (simple undo)
   const pushHistory = useCallback(() => {
     setHistory((h) => {
       const snap = {
@@ -427,21 +418,17 @@ export default function App() {
     const predEdges = edges.filter((e) => e.label === 'predecessor');
     const groupEdges = edges.filter((e) => e.label === 'group');
 
-    // Build groups with union-find
     const parent: Record<string, string> = {};
     taskNodes.forEach((t) => (parent[t.id] = t.id));
-
     const find = (id: string): string => {
       if (parent[id] !== id) parent[id] = find(parent[id]);
       return parent[id];
     };
-
     const union = (a: string, b: string) => {
       const ra = find(a);
       const rb = find(b);
       if (ra !== rb) parent[ra] = rb;
     };
-
     for (const edge of groupEdges) {
       if (edge.source.startsWith('task-') && edge.target.startsWith('task-')) {
         union(edge.source, edge.target);
@@ -462,7 +449,6 @@ export default function App() {
       return tasks.concat(direct.flatMap((c) => getTasksInside(c.id)));
     };
 
-    // Helper to get approximate absolute x of a node (account for parent)
     const getAbsX = (nodeId: string): number => {
       let x = 0;
       let current = nodes.find((n) => n.id === nodeId);
@@ -481,13 +467,10 @@ export default function App() {
 
       const srcX = getAbsX(edge.source);
       const tgtX = getAbsX(edge.target);
-
-      // Left side is the predecessor side (spatially)
       const leftIsSource = srcX <= tgtX;
       const leftId = leftIsSource ? edge.source : edge.target;
       const rightId = leftIsSource ? edge.target : edge.source;
 
-      // Expand left side to full group if it's a task
       let predTasks: string[] = [];
       if (leftId.startsWith('task-')) {
         predTasks = getGroup(leftId);
@@ -495,7 +478,6 @@ export default function App() {
         predTasks = getTasksInside(leftId);
       }
 
-      // Right side
       let succTasks: string[] = [];
       if (rightId.startsWith('task-')) {
         succTasks = [rightId];
@@ -532,7 +514,6 @@ export default function App() {
     while (done.size < taskNodes.length && guard < taskNodes.length * 5) {
       guard++;
       let scheduledAny = false;
-
       for (const node of taskNodes) {
         if (done.has(node.id) || !isReady(node.id)) continue;
 
@@ -540,7 +521,6 @@ export default function App() {
         const person = people.find((p) => p.id === personId);
         let start = personId ? personNext[personId] : todayStr();
 
-        // Ensure start is a working day
         while (isWeekend(start)) {
           start = addWorkingDays(start, 1);
         }
@@ -570,7 +550,6 @@ export default function App() {
         done.add(node.id);
         scheduledAny = true;
       }
-
       if (!scheduledAny) break;
     }
 
@@ -713,6 +692,7 @@ export default function App() {
               minZoom={0.05}
               maxZoom={2}
               fitView
+              {...({} as any)}
             >
               <Background />
               <Controls />
@@ -776,13 +756,11 @@ export default function App() {
               {phases.map((p) => <option key={p.id} value={p.id}>{p.data.label}</option>)}
             </select>
           </div>
-
           {swimMode === 'weekly' && (
             <div style={{ marginBottom: 8, fontSize: 13, color: '#444' }}>
               Work days: {workDays.join(', ')}
             </div>
           )}
-
           <div style={{ display: 'flex', marginBottom: 4, fontSize: 10, color: '#666' }}>
             <div style={{ width: 160, flexShrink: 0 }} />
             <div style={{ flex: 1, position: 'relative', height: dayLabels.length > 0 ? 28 : 20, overflow: 'hidden' }}>
@@ -809,7 +787,6 @@ export default function App() {
               )}
             </div>
           </div>
-
           {people.filter((p) => !filterPerson || p.id === filterPerson).map((p) => {
             const tasks = tasksByPerson[p.id] || [];
             return (
