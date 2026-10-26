@@ -10,6 +10,7 @@ function createWindow() {
       contextIsolation: true,
     },
   });
+
   win.loadFile(path.join(__dirname, 'dist', 'index.html'));
 }
 
