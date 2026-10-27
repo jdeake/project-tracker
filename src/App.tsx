@@ -127,6 +127,11 @@ function todayStr(): string {
   return new Date().toISOString().slice(0, 10);
 }
 
+function nowDateTime(): string {
+  const d = new Date();
+  return d.toISOString().replace('T', ' ').slice(0, 19);
+}
+
 function daysBetween(a: string, b: string): number {
   const da = new Date(a + 'T00:00:00');
   const db = new Date(b + 'T00:00:00');
@@ -181,7 +186,9 @@ export default function App() {
   const [filterPhase, setFilterPhase] = useState<string>('');
   const [listFilterPerson, setListFilterPerson] = useState<string>('');
   const [listFilterPhase, setListFilterPhase] = useState<string>('');
+  const [listMode, setListMode] = useState<'current' | 'compare'>('current');
   const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [selectedEdgeId, setSelectedEdgeId] = useState<string | null>(null);
   const [history, setHistory] = useState<any[]>([]);
   const [baselineA, setBaselineA] = useState<string>('');
   const [baselineB, setBaselineB] = useState<string>('');
@@ -202,7 +209,7 @@ export default function App() {
     });
   }, [nodes, edges, departments, people, templates, baselines]);
 
-  const undo = () => {
+  const undo = useCallback(() => {
     if (history.length === 0) return;
     const prev = history[history.length - 1];
     setHistory((h) => h.slice(0, -1));
@@ -212,7 +219,20 @@ export default function App() {
     setPeople(prev.people);
     setTemplates(prev.templates);
     setBaselines(prev.baselines);
-  };
+    setSelectedId(null);
+    setSelectedEdgeId(null);
+  }, [history, setNodes, setEdges]);
+
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if ((e.metaKey || e.ctrlKey) && e.key === 'z') {
+        e.preventDefault();
+        undo();
+      }
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [undo]);
 
   useEffect(() => {
     const data = { nodes, edges, departments, people, templates, baselines };
@@ -266,6 +286,7 @@ export default function App() {
           setTemplates(data.templates || defaultTemplates);
           setBaselines(data.baselines || []);
           setSelectedId(null);
+          setSelectedEdgeId(null);
           alert('File loaded successfully.');
         } else {
           alert('Invalid file format.');
@@ -304,6 +325,13 @@ export default function App() {
   }, [nodes]);
 
   const deleteSelected = () => {
+    if (selectedEdgeId) {
+      if (!window.confirm('Delete selected link?')) return;
+      pushHistory();
+      setEdges((eds) => eds.filter((e) => e.id !== selectedEdgeId));
+      setSelectedEdgeId(null);
+      return;
+    }
     if (!selectedId) return;
     if (!window.confirm('Delete selected item and all children?')) return;
     pushHistory();
@@ -481,44 +509,11 @@ export default function App() {
       return tasks.concat(direct.flatMap((c) => getTasksInside(c.id)));
     };
 
-    const getAbsX = (nodeId: string): number => {
-      let x = 0;
-      let current = nodes.find((n) => n.id === nodeId);
-      while (current) {
-        x += current.position.x;
-        if (!current.parentNode) break;
-        current = nodes.find((n) => n.id === current!.parentNode);
-      }
-      return x;
-    };
-
     for (const edge of predEdges) {
-      const srcNode = nodes.find((n) => n.id === edge.source);
-      const tgtNode = nodes.find((n) => n.id === edge.target);
-      if (!srcNode || !tgtNode) continue;
-
-      const srcX = getAbsX(edge.source);
-      const tgtX = getAbsX(edge.target);
-      const leftIsSource = srcX <= tgtX;
-      const leftId = leftIsSource ? edge.source : edge.target;
-      const rightId = leftIsSource ? edge.target : edge.source;
-
-      let predTasks: string[] = [];
-      if (leftId.startsWith('task-')) {
-        predTasks = [leftId];
-      } else {
-        predTasks = getTasksInside(leftId);
-      }
-
-      let succTasks: string[] = [];
-      if (rightId.startsWith('task-')) {
-        succTasks = [rightId];
-      } else {
-        succTasks = getTasksInside(rightId);
-      }
-
-      for (const succ of succTasks) {
-        for (const pred of predTasks) {
+      const srcTasks = edge.source.startsWith('task-') ? [edge.source] : getTasksInside(edge.source);
+      const tgtTasks = edge.target.startsWith('task-') ? [edge.target] : getTasksInside(edge.target);
+      for (const succ of tgtTasks) {
+        for (const pred of srcTasks) {
           if (succ !== pred) {
             mustFinishBefore[succ].add(pred);
           }
@@ -559,7 +554,7 @@ export default function App() {
 
         for (const pid of mustFinishBefore[node.id]) {
           const pf = finishMap[pid];
-          if (pf && pf > start) start = pf;
+          if (pf && pf > start) start = addWorkingDays(pf, 1);
         }
 
         const hours = node.data.estimatedHours || 0;
@@ -609,11 +604,11 @@ export default function App() {
     const newBaseline: Baseline = {
       id: `bl-${Date.now()}`,
       name,
-      date: todayStr(),
+      date: nowDateTime(),
       tasks: JSON.parse(JSON.stringify(scheduledTasks)),
     };
     setBaselines((bs) => [...bs, newBaseline]);
-    alert(`Baseline "${name}" saved.`);
+    alert(`Baseline "${name}" saved at ${newBaseline.date} with ${newBaseline.tasks.length} tasks.`);
   };
 
   const deleteBaseline = (id: string) => {
@@ -707,7 +702,7 @@ export default function App() {
         <button onClick={addPhase}>+ Phase</button>
         <button onClick={addBlock}>+ Block</button>
         <button onClick={undo} disabled={history.length === 0}>Undo</button>
-        <button onClick={deleteSelected} disabled={!selectedId} style={{ background: '#dc2626', color: 'white' }}>Delete</button>
+        <button onClick={deleteSelected} disabled={!selectedId && !selectedEdgeId} style={{ background: '#dc2626', color: 'white' }}>Delete</button>
         <button onClick={manualSave}>Save Local</button>
         <button onClick={saveToFile}>Save to File</button>
         <button onClick={() => fileInputRef.current?.click()}>Open File</button>
@@ -721,7 +716,7 @@ export default function App() {
         <div style={{ flex: 1, display: 'flex' }}>
           <div style={{ flex: 1 }}>
             <div style={{ padding: '4px 8px', background: '#f1f5f9', fontSize: 13 }}>
-              Drag from right handle to left handle to create predecessor links. Auto-saved.
+              Drag from right handle to left handle to create predecessor links. Ctrl+Z to undo. Auto-saved.
             </div>
             <ReactFlow
               nodes={displayNodes}
@@ -729,7 +724,9 @@ export default function App() {
               onNodesChange={onNodesChange}
               onEdgesChange={onEdgesChange}
               onConnect={onConnect}
-              onNodeClick={(_, node) => setSelectedId(node.id)}
+              onNodeClick={(_, node) => { setSelectedId(node.id); setSelectedEdgeId(null); }}
+              onEdgeClick={(_, edge) => { setSelectedEdgeId(edge.id); setSelectedId(null); }}
+              onPaneClick={() => { setSelectedId(null); setSelectedEdgeId(null); }}
               nodeTypes={nodeTypes}
               nodesResizable
               elevateEdgesOnSelect
@@ -751,7 +748,14 @@ export default function App() {
               {selectedId.startsWith('task-') && (
                 <>
                   <label>% Complete</label>
-                  <input type="number" min="0" max="100" value={selectedNode.data.percentComplete ?? 0} onChange={(e) => setPercent(selectedId, Number(e.target.value))} style={{ width: '100%', margin: '4px 0 12px' }} />
+                  <input
+                    type="number"
+                    min="0"
+                    max="100"
+                    value={selectedNode.data.percentComplete ?? 0}
+                    onChange={(e) => setPercent(selectedId, Number(e.target.value))}
+                    style={{ width: '100%', margin: '4px 0 12px' }}
+                  />
                 </>
               )}
               <label>Assign Person</label>
@@ -774,6 +778,13 @@ export default function App() {
                 </>
               )}
               <button onClick={deleteSelected} style={{ marginTop: 12, background: '#dc2626', color: 'white', width: '100%' }}>Delete Selected</button>
+            </div>
+          )}
+          {selectedEdgeId && (
+            <div style={{ width: 280, borderLeft: '1px solid #ddd', padding: 12, background: '#fafafa' }}>
+              <h3>Selected Link</h3>
+              <p>Predecessor link selected.</p>
+              <button onClick={deleteSelected} style={{ marginTop: 12, background: '#dc2626', color: 'white', width: '100%' }}>Delete Link</button>
             </div>
           )}
         </div>
@@ -893,6 +904,8 @@ export default function App() {
         <div style={{ flex: 1, padding: 16, overflow: 'auto' }}>
           <h2>Tasks</h2>
           <div style={{ marginBottom: 12, display: 'flex', gap: 12, flexWrap: 'wrap', alignItems: 'center' }}>
+            <button onClick={() => setListMode('current')} style={{ fontWeight: listMode === 'current' ? 'bold' : 'normal' }}>Current View</button>
+            <button onClick={() => setListMode('compare')} style={{ fontWeight: listMode === 'compare' ? 'bold' : 'normal' }}>Compare Baselines</button>
             <select value={listFilterPerson} onChange={(e) => setListFilterPerson(e.target.value)}>
               <option value="">All People</option>
               {people.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
@@ -901,83 +914,121 @@ export default function App() {
               <option value="">All Phases</option>
               {phases.map((p) => <option key={p.id} value={p.id}>{p.data.label}</option>)}
             </select>
-            <span>Compare baselines:</span>
-            <select value={baselineA} onChange={(e) => setBaselineA(e.target.value)}>
-              <option value="">— Baseline A —</option>
-              {baselines.map((b) => <option key={b.id} value={b.id}>{b.name} ({b.date})</option>)}
-            </select>
-            <select value={baselineB} onChange={(e) => setBaselineB(e.target.value)}>
-              <option value="">— Baseline B —</option>
-              {baselines.map((b) => <option key={b.id} value={b.id}>{b.name} ({b.date})</option>)}
-            </select>
+            {listMode === 'compare' && (
+              <>
+                <select value={baselineA} onChange={(e) => setBaselineA(e.target.value)}>
+                  <option value="">— Baseline A —</option>
+                  {baselines.map((b) => <option key={b.id} value={b.id}>{b.name} ({b.date})</option>)}
+                </select>
+                <select value={baselineB} onChange={(e) => setBaselineB(e.target.value)}>
+                  <option value="">— Baseline B —</option>
+                  {baselines.map((b) => <option key={b.id} value={b.id}>{b.name} ({b.date})</option>)}
+                </select>
+              </>
+            )}
           </div>
-          <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
-            <thead>
-              <tr style={{ background: '#f1f5f9' }}>
-                <th style={{ textAlign: 'left', padding: 6 }}>Task</th>
-                <th style={{ textAlign: 'left', padding: 6 }}>Person</th>
-                <th style={{ textAlign: 'right', padding: 6 }}>Hours</th>
-                <th style={{ textAlign: 'right', padding: 6 }}>%</th>
-                <th style={{ textAlign: 'left', padding: 6 }}>Start</th>
-                <th style={{ textAlign: 'left', padding: 6 }}>Finish</th>
-                {blA && blB && (
-                  <>
-                    <th style={{ textAlign: 'left', padding: 6 }}>A Start</th>
-                    <th style={{ textAlign: 'left', padding: 6 }}>A Finish</th>
-                    <th style={{ textAlign: 'left', padding: 6 }}>B Start</th>
-                    <th style={{ textAlign: 'left', padding: 6 }}>B Finish</th>
-                    <th style={{ textAlign: 'right', padding: 6 }}>Start Δ</th>
-                    <th style={{ textAlign: 'right', padding: 6 }}>Finish Δ</th>
-                    <th style={{ textAlign: 'right', padding: 6 }}>% Δ</th>
-                  </>
-                )}
-              </tr>
-            </thead>
-            <tbody>
-              {filteredListTasks.map((t) => {
-                const person = people.find((p) => p.id === t.personId);
-                const aTask = blA?.tasks.find((bt) => bt.id === t.id);
-                const bTask = blB?.tasks.find((bt) => bt.id === t.id);
-                const startDelta = aTask && bTask ? daysBetween(aTask.start, bTask.start) : 0;
-                const finishDelta = aTask && bTask ? daysBetween(aTask.finish, bTask.finish) : 0;
-                const pctDelta = aTask && bTask ? (bTask.pct - aTask.pct) : 0;
-                return (
-                  <tr key={t.id} style={{ borderBottom: '1px solid #eee' }}>
-                    <td style={{ padding: 6 }}>{t.label}</td>
-                    <td style={{ padding: 6 }}>{person?.name ?? '—'}</td>
-                    <td style={{ padding: 6, textAlign: 'right' }}>{t.hours}</td>
-                    <td style={{ padding: 6, textAlign: 'right' }}>{t.pct}%</td>
-                    <td style={{ padding: 6 }}>{t.start}</td>
-                    <td style={{ padding: 6 }}>{t.finish}</td>
-                    {blA && blB && (
-                      <>
-                        <td style={{ padding: 6 }}>{aTask?.start ?? '—'}</td>
-                        <td style={{ padding: 6 }}>{aTask?.finish ?? '—'}</td>
-                        <td style={{ padding: 6 }}>{bTask?.start ?? '—'}</td>
-                        <td style={{ padding: 6 }}>{bTask?.finish ?? '—'}</td>
-                        <td style={{ padding: 6, textAlign: 'right', color: startDelta > 0 ? '#dc2626' : startDelta < 0 ? '#16a34a' : '#666' }}>
-                          {aTask && bTask ? (startDelta > 0 ? '+' : '') + startDelta : '—'}
-                        </td>
-                        <td style={{ padding: 6, textAlign: 'right', color: finishDelta > 0 ? '#dc2626' : finishDelta < 0 ? '#16a34a' : '#666' }}>
-                          {aTask && bTask ? (finishDelta > 0 ? '+' : '') + finishDelta : '—'}
-                        </td>
-                        <td style={{ padding: 6, textAlign: 'right', color: pctDelta > 0 ? '#16a34a' : pctDelta < 0 ? '#dc2626' : '#666' }}>
-                          {aTask && bTask ? (pctDelta > 0 ? '+' : '') + pctDelta : '—'}
-                        </td>
-                      </>
-                    )}
-                  </tr>
-                );
-              })}
-            </tbody>
-          </table>
+
+          {listMode === 'current' ? (
+            <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
+              <thead>
+                <tr style={{ background: '#f1f5f9' }}>
+                  <th style={{ textAlign: 'left', padding: 6 }}>Task</th>
+                  <th style={{ textAlign: 'left', padding: 6 }}>Person</th>
+                  <th style={{ textAlign: 'right', padding: 6 }}>Hours</th>
+                  <th style={{ textAlign: 'right', padding: 6 }}>%</th>
+                  <th style={{ textAlign: 'left', padding: 6 }}>Start</th>
+                  <th style={{ textAlign: 'left', padding: 6 }}>Finish</th>
+                </tr>
+              </thead>
+              <tbody>
+                {filteredListTasks.map((t) => {
+                  const person = people.find((p) => p.id === t.personId);
+                  return (
+                    <tr key={t.id} style={{ borderBottom: '1px solid #eee' }}>
+                      <td style={{ padding: 6 }}>{t.label}</td>
+                      <td style={{ padding: 6 }}>{person?.name ?? '—'}</td>
+                      <td style={{ padding: 6, textAlign: 'right' }}>{t.hours}</td>
+                      <td style={{ padding: 6, textAlign: 'right' }}>{t.pct}%</td>
+                      <td style={{ padding: 6 }}>{t.start}</td>
+                      <td style={{ padding: 6 }}>{t.finish}</td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          ) : (
+            <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
+              <thead>
+                <tr style={{ background: '#f1f5f9' }}>
+                  <th style={{ textAlign: 'left', padding: 6 }}>Task</th>
+                  <th style={{ textAlign: 'left', padding: 6 }}>Person</th>
+                  <th style={{ textAlign: 'right', padding: 6 }}>Hours</th>
+                  <th style={{ textAlign: 'right', padding: 6 }}>%</th>
+                  <th style={{ textAlign: 'left', padding: 6 }}>Start</th>
+                  <th style={{ textAlign: 'left', padding: 6 }}>Finish</th>
+                  {blA && blB && (
+                    <>
+                      <th style={{ textAlign: 'left', padding: 6 }}>A Start</th>
+                      <th style={{ textAlign: 'left', padding: 6 }}>A Finish</th>
+                      <th style={{ textAlign: 'left', padding: 6 }}>B Start</th>
+                      <th style={{ textAlign: 'left', padding: 6 }}>B Finish</th>
+                      <th style={{ textAlign: 'right', padding: 6 }}>Start Δ</th>
+                      <th style={{ textAlign: 'right', padding: 6 }}>Finish Δ</th>
+                      <th style={{ textAlign: 'right', padding: 6 }}>% Δ</th>
+                    </>
+                  )}
+                </tr>
+              </thead>
+              <tbody>
+                {filteredListTasks.map((t) => {
+                  const person = people.find((p) => p.id === t.personId);
+                  const aTask = blA?.tasks.find((bt) => bt.id === t.id);
+                  const bTask = blB?.tasks.find((bt) => bt.id === t.id);
+                  const startDelta = aTask && bTask ? daysBetween(aTask.start, bTask.start) : 0;
+                  const finishDelta = aTask && bTask ? daysBetween(aTask.finish, bTask.finish) : 0;
+                  const pctDelta = aTask && bTask ? (bTask.pct - aTask.pct) : 0;
+                  return (
+                    <tr key={t.id} style={{ borderBottom: '1px solid #eee' }}>
+                      <td style={{ padding: 6 }}>{t.label}</td>
+                      <td style={{ padding: 6 }}>{person?.name ?? '—'}</td>
+                      <td style={{ padding: 6, textAlign: 'right' }}>{t.hours}</td>
+                      <td style={{ padding: 6, textAlign: 'right' }}>{t.pct}%</td>
+                      <td style={{ padding: 6 }}>{t.start}</td>
+                      <td style={{ padding: 6 }}>{t.finish}</td>
+                      {blA && blB && (
+                        <>
+                          <td style={{ padding: 6 }}>{aTask?.start ?? '—'}</td>
+                          <td style={{ padding: 6 }}>{aTask?.finish ?? '—'}</td>
+                          <td style={{ padding: 6 }}>{bTask?.start ?? '—'}</td>
+                          <td style={{ padding: 6 }}>{bTask?.finish ?? '—'}</td>
+                          <td style={{ padding: 6, textAlign: 'right', color: startDelta > 0 ? '#dc2626' : startDelta < 0 ? '#16a34a' : '#666' }}>
+                            {aTask && bTask ? (startDelta > 0 ? '+' : '') + startDelta : '—'}
+                          </td>
+                          <td style={{ padding: 6, textAlign: 'right', color: finishDelta > 0 ? '#dc2626' : finishDelta < 0 ? '#16a34a' : '#666' }}>
+                            {aTask && bTask ? (finishDelta > 0 ? '+' : '') + finishDelta : '—'}
+                          </td>
+                          <td style={{ padding: 6, textAlign: 'right', color: pctDelta > 0 ? '#16a34a' : pctDelta < 0 ? '#dc2626' : '#666' }}>
+                            {aTask && bTask ? (pctDelta > 0 ? '+' : '') + pctDelta : '—'}
+                          </td>
+                        </>
+                      )}
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          )}
+
           <p style={{ marginTop: 12 }}>Total Cost: ${totalCost.toFixed(0)}</p>
+
           {baselines.length > 0 && (
-            <div style={{ marginTop: 16 }}>
-              <h3>Baselines</h3>
+            <div style={{ marginTop: 20 }}>
+              <h3>Saved Baselines</h3>
               {baselines.map((b) => (
-                <div key={b.id} style={{ fontSize: 13, marginBottom: 6, display: 'flex', alignItems: 'center', gap: 8 }}>
-                  <span>{b.name} — {b.date} ({b.tasks.length} tasks)</span>
+                <div key={b.id} style={{ fontSize: 13, marginBottom: 8, display: 'flex', alignItems: 'center', gap: 12, padding: '6px 8px', background: '#f8fafc', borderRadius: 4 }}>
+                  <span style={{ flex: 1 }}>
+                    <strong>{b.name}</strong> — created {b.date} ({b.tasks.length} tasks)
+                  </span>
                   <button onClick={() => deleteBaseline(b.id)} style={{ background: '#dc2626', color: 'white', fontSize: 12 }}>Delete</button>
                 </div>
               ))}
