@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import ReactFlow, {
   addEdge,
   Background,
@@ -185,6 +185,7 @@ export default function App() {
   const [history, setHistory] = useState<any[]>([]);
   const [baselineA, setBaselineA] = useState<string>('');
   const [baselineB, setBaselineB] = useState<string>('');
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
   const pushHistory = useCallback(() => {
     setHistory((h) => {
@@ -233,10 +234,48 @@ export default function App() {
     const data = { nodes, edges, departments, people, templates, baselines };
     try {
       localStorage.setItem(STORAGE_KEY, JSON.stringify(data));
-      alert('Saved successfully.');
+      alert('Saved to local storage.');
     } catch (e) {
       alert('Save failed: ' + (e as Error).message);
     }
+  };
+
+  const saveToFile = () => {
+    const data = { nodes, edges, departments, people, templates, baselines };
+    const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `project-tracker-${todayStr()}.json`;
+    a.click();
+    URL.revokeObjectURL(url);
+  };
+
+  const openFromFile = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = (ev) => {
+      try {
+        const data = JSON.parse(ev.target?.result as string);
+        if (data.nodes && data.edges) {
+          setNodes(data.nodes);
+          setEdges(data.edges);
+          setDepartments(data.departments || defaultDepartments);
+          setPeople(data.people || defaultPeople);
+          setTemplates(data.templates || defaultTemplates);
+          setBaselines(data.baselines || []);
+          setSelectedId(null);
+          alert('File loaded successfully.');
+        } else {
+          alert('Invalid file format.');
+        }
+      } catch {
+        alert('Could not read file.');
+      }
+    };
+    reader.readAsText(file);
+    e.target.value = '';
   };
 
   const onConnect = useCallback(
@@ -669,7 +708,10 @@ export default function App() {
         <button onClick={addBlock}>+ Block</button>
         <button onClick={undo} disabled={history.length === 0}>Undo</button>
         <button onClick={deleteSelected} disabled={!selectedId} style={{ background: '#dc2626', color: 'white' }}>Delete</button>
-        <button onClick={manualSave}>Save</button>
+        <button onClick={manualSave}>Save Local</button>
+        <button onClick={saveToFile}>Save to File</button>
+        <button onClick={() => fileInputRef.current?.click()}>Open File</button>
+        <input ref={fileInputRef} type="file" accept=".json" style={{ display: 'none' }} onChange={openFromFile} />
         <button onClick={cutBaseline}>Cut Baseline</button>
         <button onClick={clearSaved} style={{ marginLeft: 8, background: '#dc2626', color: 'white' }}>Clear Saved</button>
         <span style={{ marginLeft: 'auto' }}>Total Cost: ${totalCost.toFixed(0)}</span>
