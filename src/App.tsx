@@ -204,8 +204,7 @@ export default function App() {
         templates: JSON.parse(JSON.stringify(templates)),
         baselines: JSON.parse(JSON.stringify(baselines)),
       };
-      const next = [...h, snap].slice(-30);
-      return next;
+      return [...h, snap].slice(-30);
     });
   }, [nodes, edges, departments, people, templates, baselines]);
 
@@ -509,11 +508,29 @@ export default function App() {
       return tasks.concat(direct.flatMap((c) => getTasksInside(c.id)));
     };
 
+    const getAbsX = (nodeId: string): number => {
+      let x = 0;
+      let current = nodes.find((n) => n.id === nodeId);
+      while (current) {
+        x += current.position.x;
+        if (!current.parentNode) break;
+        current = nodes.find((n) => n.id === current!.parentNode);
+      }
+      return x;
+    };
+
+    // Left side of the link always finishes first
     for (const edge of predEdges) {
-      const srcTasks = edge.source.startsWith('task-') ? [edge.source] : getTasksInside(edge.source);
-      const tgtTasks = edge.target.startsWith('task-') ? [edge.target] : getTasksInside(edge.target);
-      for (const succ of tgtTasks) {
-        for (const pred of srcTasks) {
+      const srcX = getAbsX(edge.source);
+      const tgtX = getAbsX(edge.target);
+      const leftId = srcX <= tgtX ? edge.source : edge.target;
+      const rightId = srcX <= tgtX ? edge.target : edge.source;
+
+      const predTasks = leftId.startsWith('task-') ? [leftId] : getTasksInside(leftId);
+      const succTasks = rightId.startsWith('task-') ? [rightId] : getTasksInside(rightId);
+
+      for (const succ of succTasks) {
+        for (const pred of predTasks) {
           if (succ !== pred) {
             mustFinishBefore[succ].add(pred);
           }
@@ -608,7 +625,7 @@ export default function App() {
       tasks: JSON.parse(JSON.stringify(scheduledTasks)),
     };
     setBaselines((bs) => [...bs, newBaseline]);
-    alert(`Baseline "${name}" saved at ${newBaseline.date} with ${newBaseline.tasks.length} tasks.`);
+    alert(`Baseline "${name}" saved at ${newBaseline.date}`);
   };
 
   const deleteBaseline = (id: string) => {
@@ -716,7 +733,7 @@ export default function App() {
         <div style={{ flex: 1, display: 'flex' }}>
           <div style={{ flex: 1 }}>
             <div style={{ padding: '4px 8px', background: '#f1f5f9', fontSize: 13 }}>
-              Drag from right handle to left handle to create predecessor links. Ctrl+Z to undo. Auto-saved.
+              Left side of a predecessor link always finishes first. Ctrl+Z to undo.
             </div>
             <ReactFlow
               nodes={displayNodes}
@@ -904,8 +921,8 @@ export default function App() {
         <div style={{ flex: 1, padding: 16, overflow: 'auto' }}>
           <h2>Tasks</h2>
           <div style={{ marginBottom: 12, display: 'flex', gap: 12, flexWrap: 'wrap', alignItems: 'center' }}>
-            <button onClick={() => setListMode('current')} style={{ fontWeight: listMode === 'current' ? 'bold' : 'normal' }}>Current View</button>
-            <button onClick={() => setListMode('compare')} style={{ fontWeight: listMode === 'compare' ? 'bold' : 'normal' }}>Compare Baselines</button>
+            <button onClick={() => setListMode('current')} style={{ fontWeight: listMode === 'current' ? 'bold' : 'normal', padding: '6px 12px' }}>Current View</button>
+            <button onClick={() => setListMode('compare')} style={{ fontWeight: listMode === 'compare' ? 'bold' : 'normal', padding: '6px 12px' }}>Compare Baselines</button>
             <select value={listFilterPerson} onChange={(e) => setListFilterPerson(e.target.value)}>
               <option value="">All People</option>
               {people.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
