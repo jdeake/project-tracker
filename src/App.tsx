@@ -240,7 +240,7 @@ export default function App() {
 
   useEffect(() => {
     const onClick = (e: MouseEvent) => {
-      if (fileMenuRef.current && !fileMenuRef.current.contains(e.target as Node)) {
+      if (fileMenuRef.current && !fileMenuRef.current.contains(e.target as unknown as globalThis.Node)) {
         setFileMenuOpen(false);
       }
     };
@@ -337,7 +337,6 @@ export default function App() {
   const onConnect = useCallback(
     (params: Connection) => {
       pushHistory();
-      // First node clicked (source) is Predecessor, second (target) is Successor
       setEdges((eds) =>
         addEdge(
           {
@@ -405,7 +404,6 @@ export default function App() {
     return dept?.rate ?? 0;
   };
 
-  // Build P/S markers from edges
   const predSuccMap = useMemo(() => {
     const map: Record<string, { isPred: boolean; isSucc: boolean }> = {};
     edges.forEach((e) => {
@@ -565,7 +563,6 @@ export default function App() {
       return tasks.concat(direct.flatMap((c) => getTasksInside(c.id)));
     };
 
-    // Source of edge = Predecessor (must finish first), Target = Successor
     for (const edge of predEdges) {
       const predTasks = edge.source.startsWith('task-') ? [edge.source] : getTasksInside(edge.source);
       const succTasks = edge.target.startsWith('task-') ? [edge.target] : getTasksInside(edge.target);
