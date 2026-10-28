@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, Component, type ErrorInfo, type ReactNode } from 'react';
 import ReactFlow, {
   addEdge,
   Background,
@@ -14,6 +14,35 @@ import ReactFlow, {
 import type { Connection, Node, Edge } from 'reactflow';
 import 'reactflow/dist/style.css';
 import './App.css';
+
+class ErrorBoundary extends Component<{ children: ReactNode }, { hasError: boolean; error?: Error }> {
+  constructor(props: { children: ReactNode }) {
+    super(props);
+    this.state = { hasError: false };
+  }
+  static getDerivedStateFromError(error: Error) {
+    return { hasError: true, error };
+  }
+  componentDidCatch(error: Error, info: ErrorInfo) {
+    console.error('App error:', error, info);
+  }
+  render() {
+    if (this.state.hasError) {
+      return (
+        <div style={{ padding: 40, fontFamily: 'system-ui' }}>
+          <h2>Something went wrong</h2>
+          <pre style={{ background: '#fee', padding: 16, borderRadius: 8, overflow: 'auto' }}>
+            {this.state.error?.message}
+            {'\n\n'}
+            {this.state.error?.stack}
+          </pre>
+          <button onClick={() => window.location.reload()}>Reload</button>
+        </div>
+      );
+    }
+    return this.props.children;
+  }
+}
 
 type Department = {
   id: string;
@@ -163,9 +192,6 @@ function getDaysInRange(start: string, end: string): string[] {
 const barColors = ['#f97316', '#22c55e', '#a855f7', '#ef4444', '#3b82f6', '#eab308'];
 
 function loadSaved() {
-  if (typeof window !== 'undefined' && (window as any).electronAPI?.loadData) {
-    return null;
-  }
   try {
     const raw = localStorage.getItem(STORAGE_KEY);
     if (!raw) return null;
@@ -267,16 +293,18 @@ export default function App() {
 
   useEffect(() => {
     if ((window as any).electronAPI?.loadData) {
-      (window as any).electronAPI.loadData().then((data: any) => {
-        if (data?.nodes) {
-          setNodes(data.nodes);
-          setEdges(data.edges || []);
-          setDepartments(data.departments || defaultDepartments);
-          setPeople(data.people || defaultPeople);
-          setTemplates(data.templates || defaultTemplates);
-          setBaselines(data.baselines || []);
-        }
-      });
+      (window as any).electronAPI.loadData()
+        .then((data: any) => {
+          if (data?.nodes) {
+            setNodes(data.nodes);
+            setEdges(data.edges || []);
+            setDepartments(data.departments || defaultDepartments);
+            setPeople(data.people || defaultPeople);
+            setTemplates(data.templates || defaultTemplates);
+            setBaselines(data.baselines || []);
+          }
+        })
+        .catch((err: any) => console.error('Load failed', err));
     }
   }, []);
 
@@ -773,467 +801,469 @@ export default function App() {
   };
 
   return (
-    <div style={{ height: '100vh', display: 'flex', flexDirection: 'column' }}>
-      <header style={{ padding: '8px 16px', background: '#1e293b', color: 'white', display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
-        <strong>Project Tracker</strong>
-        <div ref={fileMenuRef} style={{ position: 'relative' }}>
-          <button onClick={() => setFileMenuOpen((o) => !o)}>File</button>
-          {fileMenuOpen && (
-            <div style={{ position: 'absolute', top: '100%', left: 0, background: 'white', color: 'black', border: '1px solid #ccc', borderRadius: 4, minWidth: 160, zIndex: 100, boxShadow: '0 2px 8px rgba(0,0,0,0.15)' }}>
-              <div style={{ padding: '8px 12px', cursor: 'pointer' }} onClick={() => { manualSave(); setFileMenuOpen(false); }}>Save Local</div>
-              <div style={{ padding: '8px 12px', cursor: 'pointer' }} onClick={() => { saveToFile(); setFileMenuOpen(false); }}>Save to File</div>
-              <div style={{ padding: '8px 12px', cursor: 'pointer' }} onClick={() => { fileInputRef.current?.click(); setFileMenuOpen(false); }}>Open File</div>
-            </div>
-          )}
-        </div>
-        <input ref={fileInputRef} type="file" accept=".json" style={{ display: 'none' }} onChange={openFromFile} />
-        <button onClick={() => setView('diagram')}>Diagram</button>
-        <button onClick={() => setView('swim')}>Swim Lanes</button>
-        <button onClick={() => setView('list')}>Tasks</button>
-        <button onClick={() => setView('templates')}>Templates</button>
-        <button onClick={() => setView('people')}>People</button>
-        <button onClick={() => setView('departments')}>Departments</button>
-        <button onClick={addPhase}>+ Phase</button>
-        <button onClick={addBlock}>+ Block</button>
-        <button onClick={undo} disabled={history.length === 0}>Undo</button>
-        <button
-          onClick={() => {
-            if (selectedEdgeId) setDeleteConfirm({ type: 'edge', id: selectedEdgeId });
-            else if (selectedId) setDeleteConfirm({ type: 'node', id: selectedId });
-          }}
-          disabled={!selectedId && !selectedEdgeId}
-          style={{ background: '#dc2626', color: 'white' }}
-        >
-          Delete
-        </button>
-        <button onClick={() => { setBaselineName(`Baseline ${baselines.length + 1}`); setBaselineModal(true); }}>Cut Baseline</button>
-        <button onClick={clearSaved} style={{ marginLeft: 8, background: '#dc2626', color: 'white' }}>Clear Saved</button>
-        <span style={{ marginLeft: 'auto' }}>Total Cost: ${totalCost.toFixed(0)}</span>
-      </header>
-
-      {view === 'diagram' && (
-        <div style={{ flex: 1, display: 'flex' }}>
-          <div style={{ flex: 1 }}>
-            <div style={{ padding: '4px 8px', background: '#f1f5f9', fontSize: 13 }}>
-              Click first item (Predecessor [P]), then click second item (Successor [S]). Predecessor always finishes first. Everything else is ASAP. Ctrl+Z to undo.
-              {pendingPredecessor && <span style={{ marginLeft: 12, color: '#4a6cf7' }}>Selecting successor for {nodes.find(n => n.id === pendingPredecessor)?.data.label}...</span>}
-            </div>
-            <ReactFlow
-              nodes={displayNodes}
-              edges={edges}
-              onNodesChange={onNodesChange}
-              onEdgesChange={onEdgesChange}
-              onConnect={onConnect}
-              onNodeClick={handleNodeClick}
-              onEdgeClick={(_, edge) => { setSelectedEdgeId(edge.id); setSelectedId(null); setPendingPredecessor(null); }}
-              onPaneClick={() => { setSelectedId(null); setSelectedEdgeId(null); setPendingPredecessor(null); }}
-              nodeTypes={nodeTypes}
-              nodesResizable
-              elevateEdgesOnSelect
-              minZoom={0.05}
-              maxZoom={2}
-              fitView
-              {...({} as any)}
-            >
-              <Background />
-              <Controls />
-              <MiniMap />
-            </ReactFlow>
-          </div>
-          {selectedId && selectedNode && (
-            <div style={{ width: 280, borderLeft: '1px solid #ddd', padding: 12, background: '#fafafa', overflow: 'auto' }}>
-              <h3>Selected</h3>
-              <label>Name</label>
-              <input value={selectedNode.data.label} onChange={(e) => renameNode(selectedId, e.target.value)} style={{ width: '100%', margin: '4px 0 12px' }} />
-              {selectedId.startsWith('task-') && (
-                <>
-                  <label>% Complete</label>
-                  <input
-                    type="number"
-                    min="0"
-                    max="100"
-                    value={selectedNode.data.percentComplete ?? 0}
-                    onChange={(e) => setPercent(selectedId, Number(e.target.value))}
-                    style={{ width: '100%', margin: '4px 0 12px' }}
-                  />
-                  <label>Hours</label>
-                  <input
-                    type="number"
-                    min="0"
-                    value={selectedNode.data.estimatedHours ?? 0}
-                    onChange={(e) => {
-                      pushHistory();
-                      setNodes((nds) => nds.map((n) => n.id === selectedId ? { ...n, data: { ...n.data, estimatedHours: Number(e.target.value) } } : n));
-                    }}
-                    style={{ width: '100%', margin: '4px 0 12px' }}
-                  />
-                </>
-              )}
-              <label>Assign Person</label>
-              <select value={selectedNode.data.personId || ''} onChange={(e) => assignPerson(selectedId, e.target.value || undefined)} style={{ width: '100%', margin: '4px 0 8px' }}>
-                <option value="">— none —</option>
-                {people.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
-              </select>
-              <p style={{ fontSize: 12 }}>
-                Effective: {people.find((p) => p.id === getEffectivePerson(selectedId))?.name ?? 'none'}<br />
-                % Complete: {getPercentComplete(selectedId)}%
-              </p>
-              {(selectedId.startsWith('block-') || selectedId.startsWith('phase-')) && (
-                <>
-                  <h4>Add Task</h4>
-                  {templates.map((tmpl) => (
-                    <button key={tmpl.id} style={{ display: 'block', width: '100%', margin: '4px 0', textAlign: 'left' }} onClick={() => addFromTemplate(tmpl, selectedId)}>
-                      + {tmpl.name} ({tmpl.estimatedHours}h)
-                    </button>
-                  ))}
-                </>
-              )}
-              <button onClick={() => setDeleteConfirm({ type: 'node', id: selectedId })} style={{ marginTop: 12, background: '#dc2626', color: 'white', width: '100%' }}>Delete Selected</button>
-            </div>
-          )}
-          {selectedEdgeId && (
-            <div style={{ width: 280, borderLeft: '1px solid #ddd', padding: 12, background: '#fafafa' }}>
-              <h3>Selected Link</h3>
-              <p>Predecessor → Successor link selected.</p>
-              <button onClick={() => setDeleteConfirm({ type: 'edge', id: selectedEdgeId })} style={{ marginTop: 12, background: '#dc2626', color: 'white', width: '100%' }}>Delete Link</button>
-            </div>
-          )}
-        </div>
-      )}
-
-      {view === 'swim' && (
-        <div style={{ flex: 1, padding: 16, overflow: 'auto' }}>
-          <h2>
-            Swim Lanes —{' '}
-            {swimMode === 'daily' && `Today (${today})`}
-            {swimMode === 'weekly' && `Next 5 Work Days`}
-            {swimMode === 'package' && 'Whole Package'}
-          </h2>
-          <div style={{ marginBottom: 12, display: 'flex', gap: 12, flexWrap: 'wrap', alignItems: 'center' }}>
-            <span>View:</span>
-            <button onClick={() => setSwimMode('package')} style={{ fontWeight: swimMode === 'package' ? 'bold' : 'normal' }}>Whole Package</button>
-            <button onClick={() => setSwimMode('daily')} style={{ fontWeight: swimMode === 'daily' ? 'bold' : 'normal' }}>Daily (Today)</button>
-            <button onClick={() => setSwimMode('weekly')} style={{ fontWeight: swimMode === 'weekly' ? 'bold' : 'normal' }}>Weekly (Next 5 Work Days)</button>
-            <select value={filterPerson} onChange={(e) => setFilterPerson(e.target.value)}>
-              <option value="">All People</option>
-              {people.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
-            </select>
-            <select value={filterPhase} onChange={(e) => setFilterPhase(e.target.value)}>
-              <option value="">All Phases</option>
-              {phases.map((p) => <option key={p.id} value={p.id}>{p.data.label}</option>)}
-            </select>
-          </div>
-          {swimMode === 'weekly' && (
-            <div style={{ marginBottom: 8, fontSize: 13, color: '#444' }}>
-              Work days: {workDays.join(', ')}
-            </div>
-          )}
-          <div style={{ display: 'flex', marginBottom: 4, fontSize: 10, color: '#666' }}>
-            <div style={{ width: 160, flexShrink: 0 }} />
-            <div style={{ flex: 1, position: 'relative', height: dayLabels.length > 0 ? 28 : 20, overflow: 'hidden' }}>
-              {dayLabels.length > 0 ? (
-                dayLabels.map((d, i) => (
-                  <span
-                    key={d}
-                    style={{
-                      position: 'absolute',
-                      left: `${(i / Math.max(dayLabels.length - 1, 1)) * 100}%`,
-                      transform: 'translateX(-50%)',
-                      fontSize: 9,
-                      whiteSpace: 'nowrap',
-                    }}
-                  >
-                    {d.slice(5)}
-                  </span>
-                ))
-              ) : (
-                <>
-                  <span style={{ position: 'absolute', left: 0 }}>{minDate}</span>
-                  <span style={{ position: 'absolute', right: 0 }}>{maxDate}</span>
-                </>
-              )}
-            </div>
-          </div>
-          {people.filter((p) => !filterPerson || p.id === filterPerson).map((p) => {
-            const tasks = tasksByPerson[p.id] || [];
-            return (
-              <div key={p.id} style={{ display: 'flex', marginBottom: 6, alignItems: 'center' }}>
-                <div style={{ width: 160, flexShrink: 0, fontSize: 13, paddingRight: 8 }}>
-                  <strong>{p.name}</strong>
-                  <div style={{ fontSize: 11, color: '#666' }}>
-                    Dept {departments.find((d) => d.id === p.departmentId)?.number}
-                  </div>
-                </div>
-                <div style={{ flex: 1, position: 'relative', height: 36, background: '#f8fafc', border: '1px solid #e2e8f0', borderRadius: 4 }}>
-                  {tasks.map((t, i) => {
-                    const leftPct = (daysBetween(minDate, t.start) / totalDays) * 100;
-                    const widthPct = Math.max((daysBetween(t.start, t.finish) / totalDays) * 100, 1.5);
-                    return (
-                      <div
-                        key={t.id}
-                        title={`${t.label}\n${t.start} → ${t.finish}\n${t.pct}%`}
-                        style={{
-                          position: 'absolute',
-                          left: `${leftPct}%`,
-                          width: `${widthPct}%`,
-                          top: 6,
-                          height: 24,
-                          background: barColors[i % barColors.length],
-                          borderRadius: 4,
-                          color: 'white',
-                          fontSize: 11,
-                          display: 'flex',
-                          alignItems: 'center',
-                          paddingLeft: 6,
-                          overflow: 'hidden',
-                          whiteSpace: 'nowrap',
-                        }}
-                      >
-                        <div
-                          style={{
-                            position: 'absolute',
-                            left: 0,
-                            top: 0,
-                            bottom: 0,
-                            width: `${t.pct}%`,
-                            background: 'rgba(0,0,0,0.35)',
-                            borderRadius: '4px 0 0 4px',
-                          }}
-                        />
-                        <span style={{ position: 'relative', zIndex: 1 }}>{t.label} {t.pct}%</span>
-                      </div>
-                    );
-                  })}
-                </div>
+    <ErrorBoundary>
+      <div style={{ height: '100vh', display: 'flex', flexDirection: 'column' }}>
+        <header style={{ padding: '8px 16px', background: '#1e293b', color: 'white', display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+          <strong>Project Tracker</strong>
+          <div ref={fileMenuRef} style={{ position: 'relative' }}>
+            <button onClick={() => setFileMenuOpen((o) => !o)}>File</button>
+            {fileMenuOpen && (
+              <div style={{ position: 'absolute', top: '100%', left: 0, background: 'white', color: 'black', border: '1px solid #ccc', borderRadius: 4, minWidth: 160, zIndex: 100, boxShadow: '0 2px 8px rgba(0,0,0,0.15)' }}>
+                <div style={{ padding: '8px 12px', cursor: 'pointer' }} onClick={() => { manualSave(); setFileMenuOpen(false); }}>Save Local</div>
+                <div style={{ padding: '8px 12px', cursor: 'pointer' }} onClick={() => { saveToFile(); setFileMenuOpen(false); }}>Save to File</div>
+                <div style={{ padding: '8px 12px', cursor: 'pointer' }} onClick={() => { fileInputRef.current?.click(); setFileMenuOpen(false); }}>Open File</div>
               </div>
-            );
-          })}
-        </div>
-      )}
-
-      {view === 'list' && (
-        <div style={{ flex: 1, padding: 16, overflow: 'auto' }}>
-          <h2>Tasks</h2>
-          <div style={{ marginBottom: 12, display: 'flex', gap: 12, flexWrap: 'wrap', alignItems: 'center' }}>
-            <button onClick={() => setListMode('current')} style={{ fontWeight: listMode === 'current' ? 'bold' : 'normal', padding: '6px 12px' }}>Current View</button>
-            <button onClick={() => setListMode('compare')} style={{ fontWeight: listMode === 'compare' ? 'bold' : 'normal', padding: '6px 12px' }}>Compare Baselines</button>
-            <select value={listFilterPerson} onChange={(e) => setListFilterPerson(e.target.value)}>
-              <option value="">All People</option>
-              {people.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
-            </select>
-            <select value={listFilterPhase} onChange={(e) => setListFilterPhase(e.target.value)}>
-              <option value="">All Phases</option>
-              {phases.map((p) => <option key={p.id} value={p.id}>{p.data.label}</option>)}
-            </select>
-            {listMode === 'compare' && (
-              <>
-                <select value={baselineA} onChange={(e) => setBaselineA(e.target.value)}>
-                  <option value="">— Baseline A —</option>
-                  {baselines.map((b) => <option key={b.id} value={b.id}>{b.name} ({b.date})</option>)}
-                </select>
-                <select value={baselineB} onChange={(e) => setBaselineB(e.target.value)}>
-                  <option value="">— Baseline B —</option>
-                  {baselines.map((b) => <option key={b.id} value={b.id}>{b.name} ({b.date})</option>)}
-                </select>
-              </>
             )}
           </div>
+          <input ref={fileInputRef} type="file" accept=".json" style={{ display: 'none' }} onChange={openFromFile} />
+          <button onClick={() => setView('diagram')}>Diagram</button>
+          <button onClick={() => setView('swim')}>Swim Lanes</button>
+          <button onClick={() => setView('list')}>Tasks</button>
+          <button onClick={() => setView('templates')}>Templates</button>
+          <button onClick={() => setView('people')}>People</button>
+          <button onClick={() => setView('departments')}>Departments</button>
+          <button onClick={addPhase}>+ Phase</button>
+          <button onClick={addBlock}>+ Block</button>
+          <button onClick={undo} disabled={history.length === 0}>Undo</button>
+          <button
+            onClick={() => {
+              if (selectedEdgeId) setDeleteConfirm({ type: 'edge', id: selectedEdgeId });
+              else if (selectedId) setDeleteConfirm({ type: 'node', id: selectedId });
+            }}
+            disabled={!selectedId && !selectedEdgeId}
+            style={{ background: '#dc2626', color: 'white' }}
+          >
+            Delete
+          </button>
+          <button onClick={() => { setBaselineName(`Baseline ${baselines.length + 1}`); setBaselineModal(true); }}>Cut Baseline</button>
+          <button onClick={clearSaved} style={{ marginLeft: 8, background: '#dc2626', color: 'white' }}>Clear Saved</button>
+          <span style={{ marginLeft: 'auto' }}>Total Cost: ${totalCost.toFixed(0)}</span>
+        </header>
 
-          {listMode === 'current' ? (
-            <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
-              <thead>
-                <tr style={{ background: '#f1f5f9' }}>
-                  <th style={{ textAlign: 'left', padding: 6 }}>Task</th>
-                  <th style={{ textAlign: 'left', padding: 6 }}>Person</th>
-                  <th style={{ textAlign: 'right', padding: 6 }}>Hours</th>
-                  <th style={{ textAlign: 'right', padding: 6 }}>%</th>
-                  <th style={{ textAlign: 'left', padding: 6 }}>Start</th>
-                  <th style={{ textAlign: 'left', padding: 6 }}>Finish</th>
-                  <th style={{ textAlign: 'right', padding: 6 }}>Cost</th>
-                </tr>
-              </thead>
-              <tbody>
-                {filteredListTasks.map((t) => {
-                  const person = people.find((p) => p.id === t.personId);
-                  const rate = getRate(t.personId);
-                  const cost = rate * t.hours * (person?.defaultAllocation ?? 1);
-                  return (
-                    <tr key={t.id} style={{ borderBottom: '1px solid #eee' }}>
-                      <td style={{ padding: 6 }}>{t.label}</td>
-                      <td style={{ padding: 6 }}>{person?.name ?? '—'}</td>
-                      <td style={{ padding: 6, textAlign: 'right' }}>{t.hours}</td>
-                      <td style={{ padding: 6, textAlign: 'right' }}>{t.pct}%</td>
-                      <td style={{ padding: 6 }}>{t.start}</td>
-                      <td style={{ padding: 6 }}>{t.finish}</td>
-                      <td style={{ padding: 6, textAlign: 'right' }}>${cost.toFixed(0)}</td>
-                    </tr>
-                  );
-                })}
-              </tbody>
-            </table>
-          ) : (
-            <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
-              <thead>
-                <tr style={{ background: '#f1f5f9' }}>
-                  <th style={{ textAlign: 'left', padding: 6 }}>Task</th>
-                  <th style={{ textAlign: 'left', padding: 6 }}>Person</th>
-                  <th style={{ textAlign: 'right', padding: 6 }}>Hours</th>
-                  <th style={{ textAlign: 'right', padding: 6 }}>%</th>
-                  <th style={{ textAlign: 'left', padding: 6 }}>Finish</th>
-                  <th style={{ textAlign: 'right', padding: 6 }}>Cost</th>
-                  {blA && blB && (
-                    <>
-                      <th style={{ textAlign: 'left', padding: 6 }}>A Finish</th>
-                      <th style={{ textAlign: 'left', padding: 6 }}>B Finish</th>
-                      <th style={{ textAlign: 'right', padding: 6 }}>Finish Δ</th>
-                      <th style={{ textAlign: 'right', padding: 6 }}>A Cost</th>
-                      <th style={{ textAlign: 'right', padding: 6 }}>B Cost</th>
-                      <th style={{ textAlign: 'right', padding: 6 }}>Cost Δ</th>
-                    </>
-                  )}
-                </tr>
-              </thead>
-              <tbody>
-                {filteredListTasks.map((t) => {
-                  const person = people.find((p) => p.id === t.personId);
-                  const rate = getRate(t.personId);
-                  const cost = rate * t.hours * (person?.defaultAllocation ?? 1);
-                  const aTask = blA?.tasks.find((bt) => bt.id === t.id);
-                  const bTask = blB?.tasks.find((bt) => bt.id === t.id);
-                  const aCost = aTask ? rate * aTask.hours * (person?.defaultAllocation ?? 1) : 0;
-                  const bCost = bTask ? rate * bTask.hours * (person?.defaultAllocation ?? 1) : 0;
-                  const finishDelta = aTask && bTask ? daysBetween(aTask.finish, bTask.finish) : 0;
-                  const costDelta = bCost - aCost;
-                  return (
-                    <tr key={t.id} style={{ borderBottom: '1px solid #eee' }}>
-                      <td style={{ padding: 6 }}>{t.label}</td>
-                      <td style={{ padding: 6 }}>{person?.name ?? '—'}</td>
-                      <td style={{ padding: 6, textAlign: 'right' }}>{t.hours}</td>
-                      <td style={{ padding: 6, textAlign: 'right' }}>{t.pct}%</td>
-                      <td style={{ padding: 6 }}>{t.finish}</td>
-                      <td style={{ padding: 6, textAlign: 'right' }}>${cost.toFixed(0)}</td>
-                      {blA && blB && (
-                        <>
-                          <td style={{ padding: 6 }}>{aTask?.finish ?? '—'}</td>
-                          <td style={{ padding: 6 }}>{bTask?.finish ?? '—'}</td>
-                          <td style={{ padding: 6, textAlign: 'right', color: finishDelta > 0 ? '#dc2626' : finishDelta < 0 ? '#16a34a' : '#666' }}>
-                            {aTask && bTask ? (finishDelta > 0 ? '+' : '') + finishDelta : '—'}
-                          </td>
-                          <td style={{ padding: 6, textAlign: 'right' }}>{aTask ? `$${aCost.toFixed(0)}` : '—'}</td>
-                          <td style={{ padding: 6, textAlign: 'right' }}>{bTask ? `$${bCost.toFixed(0)}` : '—'}</td>
-                          <td style={{ padding: 6, textAlign: 'right', color: costDelta > 0 ? '#dc2626' : costDelta < 0 ? '#16a34a' : '#666' }}>
-                            {aTask && bTask ? (costDelta > 0 ? '+' : '') + `$${costDelta.toFixed(0)}` : '—'}
-                          </td>
-                        </>
-                      )}
-                    </tr>
-                  );
-                })}
-              </tbody>
-            </table>
-          )}
-
-          <p style={{ marginTop: 12 }}>Total Cost: ${totalCost.toFixed(0)}</p>
-
-          {baselines.length > 0 && (
-            <div style={{ marginTop: 20 }}>
-              <h3>Saved Baselines</h3>
-              {baselines.map((b) => (
-                <div key={b.id} style={{ fontSize: 13, marginBottom: 8, display: 'flex', alignItems: 'center', gap: 12, padding: '6px 8px', background: '#f8fafc', borderRadius: 4 }}>
-                  <span style={{ flex: 1 }}>
-                    <strong>{b.name}</strong> — created {b.date} ({b.tasks.length} tasks)
-                  </span>
-                  <button onClick={() => setDeleteConfirm({ type: 'baseline', id: b.id })} style={{ background: '#dc2626', color: 'white', fontSize: 12 }}>Delete</button>
-                </div>
-              ))}
+        {view === 'diagram' && (
+          <div style={{ flex: 1, display: 'flex' }}>
+            <div style={{ flex: 1 }}>
+              <div style={{ padding: '4px 8px', background: '#f1f5f9', fontSize: 13 }}>
+                Click first item (Predecessor [P]), then click second item (Successor [S]). Predecessor always finishes first. Everything else is ASAP. Ctrl+Z to undo.
+                {pendingPredecessor && <span style={{ marginLeft: 12, color: '#4a6cf7' }}>Selecting successor for {nodes.find(n => n.id === pendingPredecessor)?.data.label}...</span>}
+              </div>
+              <ReactFlow
+                nodes={displayNodes}
+                edges={edges}
+                onNodesChange={onNodesChange}
+                onEdgesChange={onEdgesChange}
+                onConnect={onConnect}
+                onNodeClick={handleNodeClick}
+                onEdgeClick={(_, edge) => { setSelectedEdgeId(edge.id); setSelectedId(null); setPendingPredecessor(null); }}
+                onPaneClick={() => { setSelectedId(null); setSelectedEdgeId(null); setPendingPredecessor(null); }}
+                nodeTypes={nodeTypes}
+                nodesResizable
+                elevateEdgesOnSelect
+                minZoom={0.05}
+                maxZoom={2}
+                fitView
+                {...({} as any)}
+              >
+                <Background />
+                <Controls />
+                <MiniMap />
+              </ReactFlow>
             </div>
-          )}
-        </div>
-      )}
+            {selectedId && selectedNode && (
+              <div style={{ width: 280, borderLeft: '1px solid #ddd', padding: 12, background: '#fafafa', overflow: 'auto' }}>
+                <h3>Selected</h3>
+                <label>Name</label>
+                <input value={selectedNode.data.label} onChange={(e) => renameNode(selectedId, e.target.value)} style={{ width: '100%', margin: '4px 0 12px' }} />
+                {selectedId.startsWith('task-') && (
+                  <>
+                    <label>% Complete</label>
+                    <input
+                      type="number"
+                      min="0"
+                      max="100"
+                      value={selectedNode.data.percentComplete ?? 0}
+                      onChange={(e) => setPercent(selectedId, Number(e.target.value))}
+                      style={{ width: '100%', margin: '4px 0 12px' }}
+                    />
+                    <label>Hours</label>
+                    <input
+                      type="number"
+                      min="0"
+                      value={selectedNode.data.estimatedHours ?? 0}
+                      onChange={(e) => {
+                        pushHistory();
+                        setNodes((nds) => nds.map((n) => n.id === selectedId ? { ...n, data: { ...n.data, estimatedHours: Number(e.target.value) } } : n));
+                      }}
+                      style={{ width: '100%', margin: '4px 0 12px' }}
+                    />
+                  </>
+                )}
+                <label>Assign Person</label>
+                <select value={selectedNode.data.personId || ''} onChange={(e) => assignPerson(selectedId, e.target.value || undefined)} style={{ width: '100%', margin: '4px 0 8px' }}>
+                  <option value="">— none —</option>
+                  {people.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
+                </select>
+                <p style={{ fontSize: 12 }}>
+                  Effective: {people.find((p) => p.id === getEffectivePerson(selectedId))?.name ?? 'none'}<br />
+                  % Complete: {getPercentComplete(selectedId)}%
+                </p>
+                {(selectedId.startsWith('block-') || selectedId.startsWith('phase-')) && (
+                  <>
+                    <h4>Add Task</h4>
+                    {templates.map((tmpl) => (
+                      <button key={tmpl.id} style={{ display: 'block', width: '100%', margin: '4px 0', textAlign: 'left' }} onClick={() => addFromTemplate(tmpl, selectedId)}>
+                        + {tmpl.name} ({tmpl.estimatedHours}h)
+                      </button>
+                    ))}
+                  </>
+                )}
+                <button onClick={() => setDeleteConfirm({ type: 'node', id: selectedId })} style={{ marginTop: 12, background: '#dc2626', color: 'white', width: '100%' }}>Delete Selected</button>
+              </div>
+            )}
+            {selectedEdgeId && (
+              <div style={{ width: 280, borderLeft: '1px solid #ddd', padding: 12, background: '#fafafa' }}>
+                <h3>Selected Link</h3>
+                <p>Predecessor → Successor link selected.</p>
+                <button onClick={() => setDeleteConfirm({ type: 'edge', id: selectedEdgeId })} style={{ marginTop: 12, background: '#dc2626', color: 'white', width: '100%' }}>Delete Link</button>
+              </div>
+            )}
+          </div>
+        )}
 
-      {view === 'templates' && (
-        <div style={{ flex: 1, padding: 16 }}>
-          <h2>Task Templates</h2>
-          {templates.map((tmpl) => (
-            <div key={tmpl.id} style={{ marginBottom: 8 }}>
-              <input value={tmpl.name} onChange={(e) => setTemplates((ts) => ts.map((x) => x.id === tmpl.id ? { ...x, name: e.target.value } : x))} />
-              <input type="number" value={tmpl.estimatedHours} onChange={(e) => setTemplates((ts) => ts.map((x) => x.id === tmpl.id ? { ...x, estimatedHours: Number(e.target.value) } : x))} style={{ width: 60, marginLeft: 8 }} />
-              hours
-            </div>
-          ))}
-          <button onClick={() => setTemplates((ts) => [...ts, { id: `tmpl-${nextId++}`, name: 'New', estimatedHours: 8 }])}>+ Template</button>
-        </div>
-      )}
-
-      {view === 'people' && (
-        <div style={{ flex: 1, padding: 16 }}>
-          <h2>People</h2>
-          {people.map((p) => (
-            <div key={p.id} style={{ marginBottom: 12, display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
-              <input value={p.name} onChange={(e) => setPeople((ps) => ps.map((x) => x.id === p.id ? { ...x, name: e.target.value } : x))} style={{ width: 120 }} />
-              <select value={p.departmentId} onChange={(e) => setPeople((ps) => ps.map((x) => x.id === p.id ? { ...x, departmentId: e.target.value } : x))}>
-                {departments.map((d) => <option key={d.id} value={d.id}>Dept {d.number}</option>)}
+        {view === 'swim' && (
+          <div style={{ flex: 1, padding: 16, overflow: 'auto' }}>
+            <h2>
+              Swim Lanes —{' '}
+              {swimMode === 'daily' && `Today (${today})`}
+              {swimMode === 'weekly' && `Next 5 Work Days`}
+              {swimMode === 'package' && 'Whole Package'}
+            </h2>
+            <div style={{ marginBottom: 12, display: 'flex', gap: 12, flexWrap: 'wrap', alignItems: 'center' }}>
+              <span>View:</span>
+              <button onClick={() => setSwimMode('package')} style={{ fontWeight: swimMode === 'package' ? 'bold' : 'normal' }}>Whole Package</button>
+              <button onClick={() => setSwimMode('daily')} style={{ fontWeight: swimMode === 'daily' ? 'bold' : 'normal' }}>Daily (Today)</button>
+              <button onClick={() => setSwimMode('weekly')} style={{ fontWeight: swimMode === 'weekly' ? 'bold' : 'normal' }}>Weekly (Next 5 Work Days)</button>
+              <select value={filterPerson} onChange={(e) => setFilterPerson(e.target.value)}>
+                <option value="">All People</option>
+                {people.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
               </select>
-              <input type="number" min="0" max="100" value={(p.defaultAllocation * 100).toFixed(0)} onChange={(e) => setPeople((ps) => ps.map((x) => x.id === p.id ? { ...x, defaultAllocation: Number(e.target.value) / 100 } : x))} style={{ width: 60 }} />
-              <span>% alloc</span>
-              <input type="date" value={p.startDate || ''} onChange={(e) => setPeople((ps) => ps.map((x) => x.id === p.id ? { ...x, startDate: e.target.value } : x))} />
-              <span>start</span>
+              <select value={filterPhase} onChange={(e) => setFilterPhase(e.target.value)}>
+                <option value="">All Phases</option>
+                {phases.map((p) => <option key={p.id} value={p.id}>{p.data.label}</option>)}
+              </select>
             </div>
-          ))}
-          <button onClick={() => setPeople((ps) => [...ps, { id: `p-${nextId++}`, name: 'New', departmentId: departments[0]?.id || '', defaultAllocation: 1, startDate: todayStr() }])}>+ Person</button>
-        </div>
-      )}
-
-      {view === 'departments' && (
-        <div style={{ flex: 1, padding: 16 }}>
-          <h2>Departments</h2>
-          {departments.map((d) => (
-            <div key={d.id} style={{ marginBottom: 10, display: 'flex', gap: 8, alignItems: 'center' }}>
-              <input value={d.number} onChange={(e) => setDepartments((ds) => ds.map((x) => x.id === d.id ? { ...x, number: e.target.value } : x))} style={{ width: 80 }} />
-              <span>rate $</span>
-              <input type="number" value={d.rate} onChange={(e) => setDepartments((ds) => ds.map((x) => x.id === d.id ? { ...x, rate: Number(e.target.value) } : x))} style={{ width: 80 }} />
-              /h
+            {swimMode === 'weekly' && (
+              <div style={{ marginBottom: 8, fontSize: 13, color: '#444' }}>
+                Work days: {workDays.join(', ')}
+              </div>
+            )}
+            <div style={{ display: 'flex', marginBottom: 4, fontSize: 10, color: '#666' }}>
+              <div style={{ width: 160, flexShrink: 0 }} />
+              <div style={{ flex: 1, position: 'relative', height: dayLabels.length > 0 ? 28 : 20, overflow: 'hidden' }}>
+                {dayLabels.length > 0 ? (
+                  dayLabels.map((d, i) => (
+                    <span
+                      key={d}
+                      style={{
+                        position: 'absolute',
+                        left: `${(i / Math.max(dayLabels.length - 1, 1)) * 100}%`,
+                        transform: 'translateX(-50%)',
+                        fontSize: 9,
+                        whiteSpace: 'nowrap',
+                      }}
+                    >
+                      {d.slice(5)}
+                    </span>
+                  ))
+                ) : (
+                  <>
+                    <span style={{ position: 'absolute', left: 0 }}>{minDate}</span>
+                    <span style={{ position: 'absolute', right: 0 }}>{maxDate}</span>
+                  </>
+                )}
+              </div>
             </div>
-          ))}
-          <button onClick={() => setDepartments((ds) => [...ds, { id: `d-${nextId++}`, number: '999', rate: 75 }])}>+ Department</button>
-        </div>
-      )}
+            {people.filter((p) => !filterPerson || p.id === filterPerson).map((p) => {
+              const tasks = tasksByPerson[p.id] || [];
+              return (
+                <div key={p.id} style={{ display: 'flex', marginBottom: 6, alignItems: 'center' }}>
+                  <div style={{ width: 160, flexShrink: 0, fontSize: 13, paddingRight: 8 }}>
+                    <strong>{p.name}</strong>
+                    <div style={{ fontSize: 11, color: '#666' }}>
+                      Dept {departments.find((d) => d.id === p.departmentId)?.number}
+                    </div>
+                  </div>
+                  <div style={{ flex: 1, position: 'relative', height: 36, background: '#f8fafc', border: '1px solid #e2e8f0', borderRadius: 4 }}>
+                    {tasks.map((t, i) => {
+                      const leftPct = (daysBetween(minDate, t.start) / totalDays) * 100;
+                      const widthPct = Math.max((daysBetween(t.start, t.finish) / totalDays) * 100, 1.5);
+                      return (
+                        <div
+                          key={t.id}
+                          title={`${t.label}\n${t.start} → ${t.finish}\n${t.pct}%`}
+                          style={{
+                            position: 'absolute',
+                            left: `${leftPct}%`,
+                            width: `${widthPct}%`,
+                            top: 6,
+                            height: 24,
+                            background: barColors[i % barColors.length],
+                            borderRadius: 4,
+                            color: 'white',
+                            fontSize: 11,
+                            display: 'flex',
+                            alignItems: 'center',
+                            paddingLeft: 6,
+                            overflow: 'hidden',
+                            whiteSpace: 'nowrap',
+                          }}
+                        >
+                          <div
+                            style={{
+                              position: 'absolute',
+                              left: 0,
+                              top: 0,
+                              bottom: 0,
+                              width: `${t.pct}%`,
+                              background: 'rgba(0,0,0,0.35)',
+                              borderRadius: '4px 0 0 4px',
+                            }}
+                          />
+                          <span style={{ position: 'relative', zIndex: 1 }}>{t.label} {t.pct}%</span>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        )}
 
-      {baselineModal && (
-        <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.5)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000 }}>
-          <div style={{ background: 'white', padding: 24, borderRadius: 8, minWidth: 300 }}>
-            <h3>Cut Baseline</h3>
-            <input
-              value={baselineName}
-              onChange={(e) => setBaselineName(e.target.value)}
-              placeholder="Baseline name"
-              style={{ width: '100%', padding: 8, margin: '12px 0' }}
-              autoFocus
-            />
-            <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
-              <button onClick={() => setBaselineModal(false)}>Cancel</button>
-              <button onClick={confirmCutBaseline} style={{ background: '#4a6cf7', color: 'white' }}>Create</button>
+        {view === 'list' && (
+          <div style={{ flex: 1, padding: 16, overflow: 'auto' }}>
+            <h2>Tasks</h2>
+            <div style={{ marginBottom: 12, display: 'flex', gap: 12, flexWrap: 'wrap', alignItems: 'center' }}>
+              <button onClick={() => setListMode('current')} style={{ fontWeight: listMode === 'current' ? 'bold' : 'normal', padding: '6px 12px' }}>Current View</button>
+              <button onClick={() => setListMode('compare')} style={{ fontWeight: listMode === 'compare' ? 'bold' : 'normal', padding: '6px 12px' }}>Compare Baselines</button>
+              <select value={listFilterPerson} onChange={(e) => setListFilterPerson(e.target.value)}>
+                <option value="">All People</option>
+                {people.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
+              </select>
+              <select value={listFilterPhase} onChange={(e) => setListFilterPhase(e.target.value)}>
+                <option value="">All Phases</option>
+                {phases.map((p) => <option key={p.id} value={p.id}>{p.data.label}</option>)}
+              </select>
+              {listMode === 'compare' && (
+                <>
+                  <select value={baselineA} onChange={(e) => setBaselineA(e.target.value)}>
+                    <option value="">— Baseline A —</option>
+                    {baselines.map((b) => <option key={b.id} value={b.id}>{b.name} ({b.date})</option>)}
+                  </select>
+                  <select value={baselineB} onChange={(e) => setBaselineB(e.target.value)}>
+                    <option value="">— Baseline B —</option>
+                    {baselines.map((b) => <option key={b.id} value={b.id}>{b.name} ({b.date})</option>)}
+                  </select>
+                </>
+              )}
+            </div>
+
+            {listMode === 'current' ? (
+              <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
+                <thead>
+                  <tr style={{ background: '#f1f5f9' }}>
+                    <th style={{ textAlign: 'left', padding: 6 }}>Task</th>
+                    <th style={{ textAlign: 'left', padding: 6 }}>Person</th>
+                    <th style={{ textAlign: 'right', padding: 6 }}>Hours</th>
+                    <th style={{ textAlign: 'right', padding: 6 }}>%</th>
+                    <th style={{ textAlign: 'left', padding: 6 }}>Start</th>
+                    <th style={{ textAlign: 'left', padding: 6 }}>Finish</th>
+                    <th style={{ textAlign: 'right', padding: 6 }}>Cost</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {filteredListTasks.map((t) => {
+                    const person = people.find((p) => p.id === t.personId);
+                    const rate = getRate(t.personId);
+                    const cost = rate * t.hours * (person?.defaultAllocation ?? 1);
+                    return (
+                      <tr key={t.id} style={{ borderBottom: '1px solid #eee' }}>
+                        <td style={{ padding: 6 }}>{t.label}</td>
+                        <td style={{ padding: 6 }}>{person?.name ?? '—'}</td>
+                        <td style={{ padding: 6, textAlign: 'right' }}>{t.hours}</td>
+                        <td style={{ padding: 6, textAlign: 'right' }}>{t.pct}%</td>
+                        <td style={{ padding: 6 }}>{t.start}</td>
+                        <td style={{ padding: 6 }}>{t.finish}</td>
+                        <td style={{ padding: 6, textAlign: 'right' }}>${cost.toFixed(0)}</td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            ) : (
+              <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
+                <thead>
+                  <tr style={{ background: '#f1f5f9' }}>
+                    <th style={{ textAlign: 'left', padding: 6 }}>Task</th>
+                    <th style={{ textAlign: 'left', padding: 6 }}>Person</th>
+                    <th style={{ textAlign: 'right', padding: 6 }}>Hours</th>
+                    <th style={{ textAlign: 'right', padding: 6 }}>%</th>
+                    <th style={{ textAlign: 'left', padding: 6 }}>Finish</th>
+                    <th style={{ textAlign: 'right', padding: 6 }}>Cost</th>
+                    {blA && blB && (
+                      <>
+                        <th style={{ textAlign: 'left', padding: 6 }}>A Finish</th>
+                        <th style={{ textAlign: 'left', padding: 6 }}>B Finish</th>
+                        <th style={{ textAlign: 'right', padding: 6 }}>Finish Δ</th>
+                        <th style={{ textAlign: 'right', padding: 6 }}>A Cost</th>
+                        <th style={{ textAlign: 'right', padding: 6 }}>B Cost</th>
+                        <th style={{ textAlign: 'right', padding: 6 }}>Cost Δ</th>
+                      </>
+                    )}
+                  </tr>
+                </thead>
+                <tbody>
+                  {filteredListTasks.map((t) => {
+                    const person = people.find((p) => p.id === t.personId);
+                    const rate = getRate(t.personId);
+                    const cost = rate * t.hours * (person?.defaultAllocation ?? 1);
+                    const aTask = blA?.tasks.find((bt) => bt.id === t.id);
+                    const bTask = blB?.tasks.find((bt) => bt.id === t.id);
+                    const aCost = aTask ? rate * aTask.hours * (person?.defaultAllocation ?? 1) : 0;
+                    const bCost = bTask ? rate * bTask.hours * (person?.defaultAllocation ?? 1) : 0;
+                    const finishDelta = aTask && bTask ? daysBetween(aTask.finish, bTask.finish) : 0;
+                    const costDelta = bCost - aCost;
+                    return (
+                      <tr key={t.id} style={{ borderBottom: '1px solid #eee' }}>
+                        <td style={{ padding: 6 }}>{t.label}</td>
+                        <td style={{ padding: 6 }}>{person?.name ?? '—'}</td>
+                        <td style={{ padding: 6, textAlign: 'right' }}>{t.hours}</td>
+                        <td style={{ padding: 6, textAlign: 'right' }}>{t.pct}%</td>
+                        <td style={{ padding: 6 }}>{t.finish}</td>
+                        <td style={{ padding: 6, textAlign: 'right' }}>${cost.toFixed(0)}</td>
+                        {blA && blB && (
+                          <>
+                            <td style={{ padding: 6 }}>{aTask?.finish ?? '—'}</td>
+                            <td style={{ padding: 6 }}>{bTask?.finish ?? '—'}</td>
+                            <td style={{ padding: 6, textAlign: 'right', color: finishDelta > 0 ? '#dc2626' : finishDelta < 0 ? '#16a34a' : '#666' }}>
+                              {aTask && bTask ? (finishDelta > 0 ? '+' : '') + finishDelta : '—'}
+                            </td>
+                            <td style={{ padding: 6, textAlign: 'right' }}>{aTask ? `$${aCost.toFixed(0)}` : '—'}</td>
+                            <td style={{ padding: 6, textAlign: 'right' }}>{bTask ? `$${bCost.toFixed(0)}` : '—'}</td>
+                            <td style={{ padding: 6, textAlign: 'right', color: costDelta > 0 ? '#dc2626' : costDelta < 0 ? '#16a34a' : '#666' }}>
+                              {aTask && bTask ? (costDelta > 0 ? '+' : '') + `$${costDelta.toFixed(0)}` : '—'}
+                            </td>
+                          </>
+                        )}
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            )}
+
+            <p style={{ marginTop: 12 }}>Total Cost: ${totalCost.toFixed(0)}</p>
+
+            {baselines.length > 0 && (
+              <div style={{ marginTop: 20 }}>
+                <h3>Saved Baselines</h3>
+                {baselines.map((b) => (
+                  <div key={b.id} style={{ fontSize: 13, marginBottom: 8, display: 'flex', alignItems: 'center', gap: 12, padding: '6px 8px', background: '#f8fafc', borderRadius: 4 }}>
+                    <span style={{ flex: 1 }}>
+                      <strong>{b.name}</strong> — created {b.date} ({b.tasks.length} tasks)
+                    </span>
+                    <button onClick={() => setDeleteConfirm({ type: 'baseline', id: b.id })} style={{ background: '#dc2626', color: 'white', fontSize: 12 }}>Delete</button>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        )}
+
+        {view === 'templates' && (
+          <div style={{ flex: 1, padding: 16 }}>
+            <h2>Task Templates</h2>
+            {templates.map((tmpl) => (
+              <div key={tmpl.id} style={{ marginBottom: 8 }}>
+                <input value={tmpl.name} onChange={(e) => setTemplates((ts) => ts.map((x) => x.id === tmpl.id ? { ...x, name: e.target.value } : x))} />
+                <input type="number" value={tmpl.estimatedHours} onChange={(e) => setTemplates((ts) => ts.map((x) => x.id === tmpl.id ? { ...x, estimatedHours: Number(e.target.value) } : x))} style={{ width: 60, marginLeft: 8 }} />
+                hours
+              </div>
+            ))}
+            <button onClick={() => setTemplates((ts) => [...ts, { id: `tmpl-${nextId++}`, name: 'New', estimatedHours: 8 }])}>+ Template</button>
+          </div>
+        )}
+
+        {view === 'people' && (
+          <div style={{ flex: 1, padding: 16 }}>
+            <h2>People</h2>
+            {people.map((p) => (
+              <div key={p.id} style={{ marginBottom: 12, display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+                <input value={p.name} onChange={(e) => setPeople((ps) => ps.map((x) => x.id === p.id ? { ...x, name: e.target.value } : x))} style={{ width: 120 }} />
+                <select value={p.departmentId} onChange={(e) => setPeople((ps) => ps.map((x) => x.id === p.id ? { ...x, departmentId: e.target.value } : x))}>
+                  {departments.map((d) => <option key={d.id} value={d.id}>Dept {d.number}</option>)}
+                </select>
+                <input type="number" min="0" max="100" value={(p.defaultAllocation * 100).toFixed(0)} onChange={(e) => setPeople((ps) => ps.map((x) => x.id === p.id ? { ...x, defaultAllocation: Number(e.target.value) / 100 } : x))} style={{ width: 60 }} />
+                <span>% alloc</span>
+                <input type="date" value={p.startDate || ''} onChange={(e) => setPeople((ps) => ps.map((x) => x.id === p.id ? { ...x, startDate: e.target.value } : x))} />
+                <span>start</span>
+              </div>
+            ))}
+            <button onClick={() => setPeople((ps) => [...ps, { id: `p-${nextId++}`, name: 'New', departmentId: departments[0]?.id || '', defaultAllocation: 1, startDate: todayStr() }])}>+ Person</button>
+          </div>
+        )}
+
+        {view === 'departments' && (
+          <div style={{ flex: 1, padding: 16 }}>
+            <h2>Departments</h2>
+            {departments.map((d) => (
+              <div key={d.id} style={{ marginBottom: 10, display: 'flex', gap: 8, alignItems: 'center' }}>
+                <input value={d.number} onChange={(e) => setDepartments((ds) => ds.map((x) => x.id === d.id ? { ...x, number: e.target.value } : x))} style={{ width: 80 }} />
+                <span>rate $</span>
+                <input type="number" value={d.rate} onChange={(e) => setDepartments((ds) => ds.map((x) => x.id === d.id ? { ...x, rate: Number(e.target.value) } : x))} style={{ width: 80 }} />
+                /h
+              </div>
+            ))}
+            <button onClick={() => setDepartments((ds) => [...ds, { id: `d-${nextId++}`, number: '999', rate: 75 }])}>+ Department</button>
+          </div>
+        )}
+
+        {baselineModal && (
+          <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.5)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000 }}>
+            <div style={{ background: 'white', padding: 24, borderRadius: 8, minWidth: 300 }}>
+              <h3>Cut Baseline</h3>
+              <input
+                value={baselineName}
+                onChange={(e) => setBaselineName(e.target.value)}
+                placeholder="Baseline name"
+                style={{ width: '100%', padding: 8, margin: '12px 0' }}
+                autoFocus
+              />
+              <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
+                <button onClick={() => setBaselineModal(false)}>Cancel</button>
+                <button onClick={confirmCutBaseline} style={{ background: '#4a6cf7', color: 'white' }}>Create</button>
+              </div>
             </div>
           </div>
-        </div>
-      )}
+        )}
 
-      {deleteConfirm && (
-        <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.5)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000 }}>
-          <div style={{ background: 'white', padding: 24, borderRadius: 8, minWidth: 280 }}>
-            <h3>Confirm Delete</h3>
-            <p>
-              {deleteConfirm.type === 'node' && 'Delete selected item and all children?'}
-              {deleteConfirm.type === 'edge' && 'Delete selected link?'}
-              {deleteConfirm.type === 'baseline' && 'Delete this baseline?'}
-            </p>
-            <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
-              <button onClick={() => setDeleteConfirm(null)}>Cancel</button>
-              <button onClick={() => performDelete(deleteConfirm.type, deleteConfirm.id)} style={{ background: '#dc2626', color: 'white' }}>Delete</button>
+        {deleteConfirm && (
+          <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.5)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000 }}>
+            <div style={{ background: 'white', padding: 24, borderRadius: 8, minWidth: 280 }}>
+              <h3>Confirm Delete</h3>
+              <p>
+                {deleteConfirm.type === 'node' && 'Delete selected item and all children?'}
+                {deleteConfirm.type === 'edge' && 'Delete selected link?'}
+                {deleteConfirm.type === 'baseline' && 'Delete this baseline?'}
+              </p>
+              <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
+                <button onClick={() => setDeleteConfirm(null)}>Cancel</button>
+                <button onClick={() => performDelete(deleteConfirm.type, deleteConfirm.id)} style={{ background: '#dc2626', color: 'white' }}>Delete</button>
+              </div>
             </div>
           </div>
-        </div>
-      )}
-    </div>
+        )}
+      </div>
+    </ErrorBoundary>
   );
 }
