@@ -978,11 +978,14 @@ export default function App() {
                   <th style={{ textAlign: 'right', padding: 6 }}>%</th>
                   <th style={{ textAlign: 'left', padding: 6 }}>Start</th>
                   <th style={{ textAlign: 'left', padding: 6 }}>Finish</th>
+                  <th style={{ textAlign: 'right', padding: 6 }}>Cost</th>
                 </tr>
               </thead>
               <tbody>
                 {filteredListTasks.map((t) => {
                   const person = people.find((p) => p.id === t.personId);
+                  const rate = getRate(t.personId);
+                  const cost = rate * t.hours * (person?.defaultAllocation ?? 1);
                   return (
                     <tr key={t.id} style={{ borderBottom: '1px solid #eee' }}>
                       <td style={{ padding: 6 }}>{t.label}</td>
@@ -991,6 +994,7 @@ export default function App() {
                       <td style={{ padding: 6, textAlign: 'right' }}>{t.pct}%</td>
                       <td style={{ padding: 6 }}>{t.start}</td>
                       <td style={{ padding: 6 }}>{t.finish}</td>
+                      <td style={{ padding: 6, textAlign: 'right' }}>${cost.toFixed(0)}</td>
                     </tr>
                   );
                 })}
@@ -1004,17 +1008,16 @@ export default function App() {
                   <th style={{ textAlign: 'left', padding: 6 }}>Person</th>
                   <th style={{ textAlign: 'right', padding: 6 }}>Hours</th>
                   <th style={{ textAlign: 'right', padding: 6 }}>%</th>
-                  <th style={{ textAlign: 'left', padding: 6 }}>Start</th>
                   <th style={{ textAlign: 'left', padding: 6 }}>Finish</th>
+                  <th style={{ textAlign: 'right', padding: 6 }}>Cost</th>
                   {blA && blB && (
                     <>
-                      <th style={{ textAlign: 'left', padding: 6 }}>A Start</th>
                       <th style={{ textAlign: 'left', padding: 6 }}>A Finish</th>
-                      <th style={{ textAlign: 'left', padding: 6 }}>B Start</th>
                       <th style={{ textAlign: 'left', padding: 6 }}>B Finish</th>
-                      <th style={{ textAlign: 'right', padding: 6 }}>Start Δ</th>
                       <th style={{ textAlign: 'right', padding: 6 }}>Finish Δ</th>
-                      <th style={{ textAlign: 'right', padding: 6 }}>% Δ</th>
+                      <th style={{ textAlign: 'right', padding: 6 }}>A Cost</th>
+                      <th style={{ textAlign: 'right', padding: 6 }}>B Cost</th>
+                      <th style={{ textAlign: 'right', padding: 6 }}>Cost Δ</th>
                     </>
                   )}
                 </tr>
@@ -1022,33 +1025,33 @@ export default function App() {
               <tbody>
                 {filteredListTasks.map((t) => {
                   const person = people.find((p) => p.id === t.personId);
+                  const rate = getRate(t.personId);
+                  const cost = rate * t.hours * (person?.defaultAllocation ?? 1);
                   const aTask = blA?.tasks.find((bt) => bt.id === t.id);
                   const bTask = blB?.tasks.find((bt) => bt.id === t.id);
-                  const startDelta = aTask && bTask ? daysBetween(aTask.start, bTask.start) : 0;
+                  const aCost = aTask ? rate * aTask.hours * (person?.defaultAllocation ?? 1) : 0;
+                  const bCost = bTask ? rate * bTask.hours * (person?.defaultAllocation ?? 1) : 0;
                   const finishDelta = aTask && bTask ? daysBetween(aTask.finish, bTask.finish) : 0;
-                  const pctDelta = aTask && bTask ? (bTask.pct - aTask.pct) : 0;
+                  const costDelta = bCost - aCost;
                   return (
                     <tr key={t.id} style={{ borderBottom: '1px solid #eee' }}>
                       <td style={{ padding: 6 }}>{t.label}</td>
                       <td style={{ padding: 6 }}>{person?.name ?? '—'}</td>
                       <td style={{ padding: 6, textAlign: 'right' }}>{t.hours}</td>
                       <td style={{ padding: 6, textAlign: 'right' }}>{t.pct}%</td>
-                      <td style={{ padding: 6 }}>{t.start}</td>
                       <td style={{ padding: 6 }}>{t.finish}</td>
+                      <td style={{ padding: 6, textAlign: 'right' }}>${cost.toFixed(0)}</td>
                       {blA && blB && (
                         <>
-                          <td style={{ padding: 6 }}>{aTask?.start ?? '—'}</td>
                           <td style={{ padding: 6 }}>{aTask?.finish ?? '—'}</td>
-                          <td style={{ padding: 6 }}>{bTask?.start ?? '—'}</td>
                           <td style={{ padding: 6 }}>{bTask?.finish ?? '—'}</td>
-                          <td style={{ padding: 6, textAlign: 'right', color: startDelta > 0 ? '#dc2626' : startDelta < 0 ? '#16a34a' : '#666' }}>
-                            {aTask && bTask ? (startDelta > 0 ? '+' : '') + startDelta : '—'}
-                          </td>
                           <td style={{ padding: 6, textAlign: 'right', color: finishDelta > 0 ? '#dc2626' : finishDelta < 0 ? '#16a34a' : '#666' }}>
                             {aTask && bTask ? (finishDelta > 0 ? '+' : '') + finishDelta : '—'}
                           </td>
-                          <td style={{ padding: 6, textAlign: 'right', color: pctDelta > 0 ? '#16a34a' : pctDelta < 0 ? '#dc2626' : '#666' }}>
-                            {aTask && bTask ? (pctDelta > 0 ? '+' : '') + pctDelta : '—'}
+                          <td style={{ padding: 6, textAlign: 'right' }}>{aTask ? `$${aCost.toFixed(0)}` : '—'}</td>
+                          <td style={{ padding: 6, textAlign: 'right' }}>{bTask ? `$${bCost.toFixed(0)}` : '—'}</td>
+                          <td style={{ padding: 6, textAlign: 'right', color: costDelta > 0 ? '#dc2626' : costDelta < 0 ? '#16a34a' : '#666' }}>
+                            {aTask && bTask ? (costDelta > 0 ? '+' : '') + `$${costDelta.toFixed(0)}` : '—'}
                           </td>
                         </>
                       )}
