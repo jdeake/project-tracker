@@ -163,6 +163,9 @@ function getDaysInRange(start: string, end: string): string[] {
 const barColors = ['#f97316', '#22c55e', '#a855f7', '#ef4444', '#3b82f6', '#eab308'];
 
 function loadSaved() {
+  if (typeof window !== 'undefined' && (window as any).electronAPI?.loadData) {
+    return null;
+  }
   try {
     const raw = localStorage.getItem(STORAGE_KEY);
     if (!raw) return null;
@@ -235,12 +238,30 @@ export default function App() {
 
   useEffect(() => {
     const data = { nodes, edges, departments, people, templates, baselines };
+    if ((window as any).electronAPI?.saveData) {
+      (window as any).electronAPI.saveData(data);
+    }
     try {
       localStorage.setItem(STORAGE_KEY, JSON.stringify(data));
     } catch (e) {
       console.warn('Could not save to localStorage', e);
     }
   }, [nodes, edges, departments, people, templates, baselines]);
+
+  useEffect(() => {
+    if ((window as any).electronAPI?.loadData) {
+      (window as any).electronAPI.loadData().then((data: any) => {
+        if (data?.nodes) {
+          setNodes(data.nodes);
+          setEdges(data.edges || []);
+          setDepartments(data.departments || defaultDepartments);
+          setPeople(data.people || defaultPeople);
+          setTemplates(data.templates || defaultTemplates);
+          setBaselines(data.baselines || []);
+        }
+      });
+    }
+  }, []);
 
   const clearSaved = () => {
     if (window.confirm('Clear all saved data and start over?')) {
@@ -251,9 +272,12 @@ export default function App() {
 
   const manualSave = () => {
     const data = { nodes, edges, departments, people, templates, baselines };
+    if ((window as any).electronAPI?.saveData) {
+      (window as any).electronAPI.saveData(data);
+    }
     try {
       localStorage.setItem(STORAGE_KEY, JSON.stringify(data));
-      alert('Saved to local storage.');
+      alert('Saved.');
     } catch (e) {
       alert('Save failed: ' + (e as Error).message);
     }
@@ -519,7 +543,6 @@ export default function App() {
       return x;
     };
 
-    // Left side of the link always finishes first
     for (const edge of predEdges) {
       const srcX = getAbsX(edge.source);
       const tgtX = getAbsX(edge.target);

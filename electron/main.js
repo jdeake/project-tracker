@@ -1,6 +1,7 @@
-import { app, BrowserWindow } from 'electron';
+import { app, BrowserWindow, ipcMain } from 'electron';
 import path from 'path';
 import { fileURLToPath } from 'url';
+import fs from 'fs';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -11,17 +12,40 @@ function createWindow() {
     webPreferences: {
       nodeIntegration: false,
       contextIsolation: true,
+      preload: path.join(__dirname, 'preload.js'),
     },
   });
 
-  // In development load Vite, in production load built files
   if (process.env.NODE_ENV === 'development' || !app.isPackaged) {
     win.loadURL('http://localhost:5173');
     win.webContents.openDevTools();
   } else {
-    win.loadFile(path.join(__dirname, '../dist/index.html'));
+    const indexPath = path.join(__dirname, '../dist/index.html');
+    win.loadFile(indexPath);
   }
 }
+
+const getDataPath = () => path.join(app.getPath('userData'), 'project-tracker-data.json');
+
+ipcMain.handle('save-data', async (_event, data) => {
+  try {
+    fs.writeFileSync(getDataPath(), JSON.stringify(data, null, 2));
+    return { ok: true };
+  } catch (err) {
+    return { ok: false, error: String(err) };
+  }
+});
+
+ipcMain.handle('load-data', async () => {
+  try {
+    const p = getDataPath();
+    if (!fs.existsSync(p)) return null;
+    const raw = fs.readFileSync(p, 'utf8');
+    return JSON.parse(raw);
+  } catch {
+    return null;
+  }
+});
 
 app.whenReady().then(createWindow);
 
