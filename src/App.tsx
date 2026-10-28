@@ -196,6 +196,10 @@ export default function App() {
   const [baselineA, setBaselineA] = useState<string>('');
   const [baselineB, setBaselineB] = useState<string>('');
   const [fileMenuOpen, setFileMenuOpen] = useState(false);
+  const [pendingPredecessor, setPendingPredecessor] = useState<string | null>(null);
+  const [baselineModal, setBaselineModal] = useState(false);
+  const [baselineName, setBaselineName] = useState('');
+  const [deleteConfirm, setDeleteConfirm] = useState<{ type: 'node' | 'edge' | 'baseline'; id?: string } | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const fileMenuRef = useRef<HTMLDivElement>(null);
 
@@ -225,6 +229,7 @@ export default function App() {
     setBaselines(prev.baselines);
     setSelectedId(null);
     setSelectedEdgeId(null);
+    setPendingPredecessor(null);
   }, [history, setNodes, setEdges]);
 
   useEffect(() => {
@@ -322,6 +327,7 @@ export default function App() {
           setBaselines(data.baselines || []);
           setSelectedId(null);
           setSelectedEdgeId(null);
+          setPendingPredecessor(null);
           alert('File loaded successfully.');
         } else {
           alert('Invalid file format.');
@@ -336,6 +342,7 @@ export default function App() {
 
   const onConnect = useCallback(
     (params: Connection) => {
+      // Still support drag-connect, but treat source as P and target as S
       pushHistory();
       setEdges((eds) =>
         addEdge(
@@ -359,21 +366,23 @@ export default function App() {
     return children.concat(children.flatMap(getDescendants));
   }, [nodes]);
 
-  const deleteSelected = () => {
-    if (selectedEdgeId) {
-      if (!window.confirm('Delete selected link?')) return;
-      pushHistory();
-      setEdges((eds) => eds.filter((e) => e.id !== selectedEdgeId));
-      setSelectedEdgeId(null);
-      return;
-    }
-    if (!selectedId) return;
-    if (!window.confirm('Delete selected item and all children?')) return;
+  const performDelete = (type: 'node' | 'edge' | 'baseline', id?: string) => {
     pushHistory();
-    const toDelete = new Set([selectedId, ...getDescendants(selectedId)]);
-    setNodes((nds) => nds.filter((n) => !toDelete.has(n.id)));
-    setEdges((eds) => eds.filter((e) => !toDelete.has(e.source) && !toDelete.has(e.target)));
-    setSelectedId(null);
+    if (type === 'edge' && id) {
+      setEdges((eds) => eds.filter((e) => e.id !== id));
+      setSelectedEdgeId(null);
+    } else if (type === 'node' && id) {
+      const toDelete = new Set([id, ...getDescendants(id)]);
+      setNodes((nds) => nds.filter((n) => !toDelete.has(n.id)));
+      setEdges((eds) => eds.filter((e) => !toDelete.has(e.source) && !toDelete.has(e.target)));
+      setSelectedId(null);
+    } else if (type === 'baseline' && id) {
+      setBaselines((bs) => bs.filter((b) => b.id !== id));
+      if (baselineA === id) setBaselineA('');
+      if (baselineB === id) setBaselineB('');
+    }
+    setDeleteConfirm(null);
+    setPendingPredecessor(null);
   };
 
   const getEffectivePerson = useCallback((nodeId: string): string | undefined => {
@@ -425,13 +434,14 @@ export default function App() {
       let markers = '';
       if (ps?.isPred) markers += ' [P]';
       if (ps?.isSucc) markers += ' [S]';
+      if (pendingPredecessor === n.id) markers += ' (selecting...)';
       const hoursStr = n.id.startsWith('task-') && hours != null ? ` (${hours}h)` : '';
       const label = person
         ? `${n.data.label}${hoursStr}${markers}\n(${person.name}) ${pct}%`
         : `${n.data.label}${hoursStr}${markers}\n${pct}%`;
       return { ...n, data: { ...n.data, label } };
     });
-  }, [nodes, people, getEffectivePerson, getPercentComplete, predSuccMap]);
+  }, [nodes, people, getEffectivePerson, getPercentComplete, predSuccMap, pendingPredecessor]);
 
   const totalCost = useMemo(() => {
     return nodes
@@ -653,9 +663,9 @@ export default function App() {
     return result;
   }, [nodes, edges, people, getEffectivePerson]);
 
-  const cutBaseline = () => {
+  const confirmCutBaseline = () => {
+    const name = baselineName.trim() || `Baseline ${baselines.length + 1}`;
     pushHistory();
-    const name = window.prompt('Baseline name:', `Baseline ${baselines.length + 1}`) || `Baseline ${baselines.length + 1}`;
     const newBaseline: Baseline = {
       id: `bl-${Date.now()}`,
       name,
@@ -663,15 +673,8 @@ export default function App() {
       tasks: JSON.parse(JSON.stringify(scheduledTasks)),
     };
     setBaselines((bs) => [...bs, newBaseline]);
-    alert(`Baseline "${name}" saved at ${newBaseline.date}`);
-  };
-
-  const deleteBaseline = (id: string) => {
-    if (!window.confirm('Delete this baseline?')) return;
-    pushHistory();
-    setBaselines((bs) => bs.filter((b) => b.id !== id));
-    if (baselineA === id) setBaselineA('');
-    if (baselineB === id) setBaselineB('');
+    setBaselineModal(false);
+    setBaselineName('');
   };
 
   const filteredScheduled = useMemo(() => {
@@ -744,6 +747,36 @@ export default function App() {
     return { minDate: min, maxDate: max, totalDays: total, dayLabels: labels };
   }, [filteredScheduled]);
 
+  const handleNodeClick = (_: any, node: Node) => {
+    setSelectedEdgeId(null);
+    if (pendingPredecessor && pendingPredecessor !== node.id) {
+      // Second click creates the link: first = P (source), second = S (target)
+      pushHistory();
+      setEdges((eds) =>
+        addEdge(
+          {
+            source: pendingPredecessor,
+            target: node.id,
+            type: 'smoothstep',
+            label: 'P → S',
+            style: { stroke: '#222', strokeWidth: 2.5 },
+            markerEnd: { type: MarkerType.ArrowClosed },
+            zIndex: 2000,
+          },
+          eds
+        )
+      );
+      setPendingPredecessor(null);
+      setSelectedId(node.id);
+    } else if (pendingPredecessor === node.id) {
+      setPendingPredecessor(null);
+      setSelectedId(node.id);
+    } else {
+      setPendingPredecessor(node.id);
+      setSelectedId(node.id);
+    }
+  };
+
   return (
     <div style={{ height: '100vh', display: 'flex', flexDirection: 'column' }}>
       <header style={{ padding: '8px 16px', background: '#1e293b', color: 'white', display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
@@ -768,8 +801,17 @@ export default function App() {
         <button onClick={addPhase}>+ Phase</button>
         <button onClick={addBlock}>+ Block</button>
         <button onClick={undo} disabled={history.length === 0}>Undo</button>
-        <button onClick={deleteSelected} disabled={!selectedId && !selectedEdgeId} style={{ background: '#dc2626', color: 'white' }}>Delete</button>
-        <button onClick={cutBaseline}>Cut Baseline</button>
+        <button
+          onClick={() => {
+            if (selectedEdgeId) setDeleteConfirm({ type: 'edge', id: selectedEdgeId });
+            else if (selectedId) setDeleteConfirm({ type: 'node', id: selectedId });
+          }}
+          disabled={!selectedId && !selectedEdgeId}
+          style={{ background: '#dc2626', color: 'white' }}
+        >
+          Delete
+        </button>
+        <button onClick={() => { setBaselineName(`Baseline ${baselines.length + 1}`); setBaselineModal(true); }}>Cut Baseline</button>
         <button onClick={clearSaved} style={{ marginLeft: 8, background: '#dc2626', color: 'white' }}>Clear Saved</button>
         <span style={{ marginLeft: 'auto' }}>Total Cost: ${totalCost.toFixed(0)}</span>
       </header>
@@ -778,7 +820,8 @@ export default function App() {
         <div style={{ flex: 1, display: 'flex' }}>
           <div style={{ flex: 1 }}>
             <div style={{ padding: '4px 8px', background: '#f1f5f9', fontSize: 13 }}>
-              Drag from the first task (Predecessor [P]) to the second (Successor [S]). Predecessor always finishes first. Everything else is ASAP. Ctrl+Z to undo.
+              Click first item (Predecessor [P]), then click second item (Successor [S]). Predecessor always finishes first. Everything else is ASAP. Ctrl+Z to undo.
+              {pendingPredecessor && <span style={{ marginLeft: 12, color: '#4a6cf7' }}>Selecting successor for {nodes.find(n => n.id === pendingPredecessor)?.data.label}...</span>}
             </div>
             <ReactFlow
               nodes={displayNodes}
@@ -786,9 +829,9 @@ export default function App() {
               onNodesChange={onNodesChange}
               onEdgesChange={onEdgesChange}
               onConnect={onConnect}
-              onNodeClick={(_, node) => { setSelectedId(node.id); setSelectedEdgeId(null); }}
-              onEdgeClick={(_, edge) => { setSelectedEdgeId(edge.id); setSelectedId(null); }}
-              onPaneClick={() => { setSelectedId(null); setSelectedEdgeId(null); }}
+              onNodeClick={handleNodeClick}
+              onEdgeClick={(_, edge) => { setSelectedEdgeId(edge.id); setSelectedId(null); setPendingPredecessor(null); }}
+              onPaneClick={() => { setSelectedId(null); setSelectedEdgeId(null); setPendingPredecessor(null); }}
               nodeTypes={nodeTypes}
               nodesResizable
               elevateEdgesOnSelect
@@ -850,14 +893,14 @@ export default function App() {
                   ))}
                 </>
               )}
-              <button onClick={deleteSelected} style={{ marginTop: 12, background: '#dc2626', color: 'white', width: '100%' }}>Delete Selected</button>
+              <button onClick={() => setDeleteConfirm({ type: 'node', id: selectedId })} style={{ marginTop: 12, background: '#dc2626', color: 'white', width: '100%' }}>Delete Selected</button>
             </div>
           )}
           {selectedEdgeId && (
             <div style={{ width: 280, borderLeft: '1px solid #ddd', padding: 12, background: '#fafafa' }}>
               <h3>Selected Link</h3>
               <p>Predecessor → Successor link selected.</p>
-              <button onClick={deleteSelected} style={{ marginTop: 12, background: '#dc2626', color: 'white', width: '100%' }}>Delete Link</button>
+              <button onClick={() => setDeleteConfirm({ type: 'edge', id: selectedEdgeId })} style={{ marginTop: 12, background: '#dc2626', color: 'white', width: '100%' }}>Delete Link</button>
             </div>
           )}
         </div>
@@ -1105,7 +1148,7 @@ export default function App() {
                   <span style={{ flex: 1 }}>
                     <strong>{b.name}</strong> — created {b.date} ({b.tasks.length} tasks)
                   </span>
-                  <button onClick={() => deleteBaseline(b.id)} style={{ background: '#dc2626', color: 'white', fontSize: 12 }}>Delete</button>
+                  <button onClick={() => setDeleteConfirm({ type: 'baseline', id: b.id })} style={{ background: '#dc2626', color: 'white', fontSize: 12 }}>Delete</button>
                 </div>
               ))}
             </div>
@@ -1158,6 +1201,42 @@ export default function App() {
             </div>
           ))}
           <button onClick={() => setDepartments((ds) => [...ds, { id: `d-${nextId++}`, number: '999', rate: 75 }])}>+ Department</button>
+        </div>
+      )}
+
+      {baselineModal && (
+        <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.5)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000 }}>
+          <div style={{ background: 'white', padding: 24, borderRadius: 8, minWidth: 300 }}>
+            <h3>Cut Baseline</h3>
+            <input
+              value={baselineName}
+              onChange={(e) => setBaselineName(e.target.value)}
+              placeholder="Baseline name"
+              style={{ width: '100%', padding: 8, margin: '12px 0' }}
+              autoFocus
+            />
+            <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
+              <button onClick={() => setBaselineModal(false)}>Cancel</button>
+              <button onClick={confirmCutBaseline} style={{ background: '#4a6cf7', color: 'white' }}>Create</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {deleteConfirm && (
+        <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.5)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000 }}>
+          <div style={{ background: 'white', padding: 24, borderRadius: 8, minWidth: 280 }}>
+            <h3>Confirm Delete</h3>
+            <p>
+              {deleteConfirm.type === 'node' && 'Delete selected item and all children?'}
+              {deleteConfirm.type === 'edge' && 'Delete selected link?'}
+              {deleteConfirm.type === 'baseline' && 'Delete this baseline?'}
+            </p>
+            <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
+              <button onClick={() => setDeleteConfirm(null)}>Cancel</button>
+              <button onClick={() => performDelete(deleteConfirm.type, deleteConfirm.id)} style={{ background: '#dc2626', color: 'white' }}>Delete</button>
+            </div>
+          </div>
         </div>
       )}
     </div>
