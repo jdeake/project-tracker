@@ -195,7 +195,9 @@ export default function App() {
   const [history, setHistory] = useState<any[]>([]);
   const [baselineA, setBaselineA] = useState<string>('');
   const [baselineB, setBaselineB] = useState<string>('');
+  const [fileMenuOpen, setFileMenuOpen] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const fileMenuRef = useRef<HTMLDivElement>(null);
 
   const pushHistory = useCallback(() => {
     setHistory((h) => {
@@ -235,6 +237,16 @@ export default function App() {
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
   }, [undo]);
+
+  useEffect(() => {
+    const onClick = (e: MouseEvent) => {
+      if (fileMenuRef.current && !fileMenuRef.current.contains(e.target as Node)) {
+        setFileMenuOpen(false);
+      }
+    };
+    document.addEventListener('mousedown', onClick);
+    return () => document.removeEventListener('mousedown', onClick);
+  }, []);
 
   useEffect(() => {
     const data = { nodes, edges, departments, people, templates, baselines };
@@ -325,12 +337,13 @@ export default function App() {
   const onConnect = useCallback(
     (params: Connection) => {
       pushHistory();
+      // First node clicked (source) is Predecessor, second (target) is Successor
       setEdges((eds) =>
         addEdge(
           {
             ...params,
             type: 'smoothstep',
-            label: 'predecessor',
+            label: 'P → S',
             style: { stroke: '#222', strokeWidth: 2.5 },
             markerEnd: { type: MarkerType.ArrowClosed },
             zIndex: 2000,
@@ -392,15 +405,35 @@ export default function App() {
     return dept?.rate ?? 0;
   };
 
+  // Build P/S markers from edges
+  const predSuccMap = useMemo(() => {
+    const map: Record<string, { isPred: boolean; isSucc: boolean }> = {};
+    edges.forEach((e) => {
+      if (!map[e.source]) map[e.source] = { isPred: false, isSucc: false };
+      if (!map[e.target]) map[e.target] = { isPred: false, isSucc: false };
+      map[e.source].isPred = true;
+      map[e.target].isSucc = true;
+    });
+    return map;
+  }, [edges]);
+
   const displayNodes = useMemo(() => {
     return nodes.map((n) => {
       const personId = getEffectivePerson(n.id);
       const person = people.find((p) => p.id === personId);
       const pct = getPercentComplete(n.id);
-      const label = person ? `${n.data.label}\n(${person.name}) ${pct}%` : `${n.data.label}\n${pct}%`;
+      const hours = n.data.estimatedHours;
+      const ps = predSuccMap[n.id];
+      let markers = '';
+      if (ps?.isPred) markers += ' [P]';
+      if (ps?.isSucc) markers += ' [S]';
+      const hoursStr = n.id.startsWith('task-') && hours != null ? ` (${hours}h)` : '';
+      const label = person
+        ? `${n.data.label}${hoursStr}${markers}\n(${person.name}) ${pct}%`
+        : `${n.data.label}${hoursStr}${markers}\n${pct}%`;
       return { ...n, data: { ...n.data, label } };
     });
-  }, [nodes, people, getEffectivePerson, getPercentComplete]);
+  }, [nodes, people, getEffectivePerson, getPercentComplete, predSuccMap]);
 
   const totalCost = useMemo(() => {
     return nodes
@@ -521,7 +554,7 @@ export default function App() {
     const taskNodes = nodes.filter((n) => n.id.startsWith('task-'));
     if (taskNodes.length === 0) return [];
 
-    const predEdges = edges.filter((e) => e.label === 'predecessor');
+    const predEdges = edges;
 
     const mustFinishBefore: Record<string, Set<string>> = {};
     taskNodes.forEach((t) => (mustFinishBefore[t.id] = new Set()));
@@ -532,25 +565,10 @@ export default function App() {
       return tasks.concat(direct.flatMap((c) => getTasksInside(c.id)));
     };
 
-    const getAbsX = (nodeId: string): number => {
-      let x = 0;
-      let current = nodes.find((n) => n.id === nodeId);
-      while (current) {
-        x += current.position.x;
-        if (!current.parentNode) break;
-        current = nodes.find((n) => n.id === current!.parentNode);
-      }
-      return x;
-    };
-
+    // Source of edge = Predecessor (must finish first), Target = Successor
     for (const edge of predEdges) {
-      const srcX = getAbsX(edge.source);
-      const tgtX = getAbsX(edge.target);
-      const leftId = srcX <= tgtX ? edge.source : edge.target;
-      const rightId = srcX <= tgtX ? edge.target : edge.source;
-
-      const predTasks = leftId.startsWith('task-') ? [leftId] : getTasksInside(leftId);
-      const succTasks = rightId.startsWith('task-') ? [rightId] : getTasksInside(rightId);
+      const predTasks = edge.source.startsWith('task-') ? [edge.source] : getTasksInside(edge.source);
+      const succTasks = edge.target.startsWith('task-') ? [edge.target] : getTasksInside(edge.target);
 
       for (const succ of succTasks) {
         for (const pred of predTasks) {
@@ -733,6 +751,17 @@ export default function App() {
     <div style={{ height: '100vh', display: 'flex', flexDirection: 'column' }}>
       <header style={{ padding: '8px 16px', background: '#1e293b', color: 'white', display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
         <strong>Project Tracker</strong>
+        <div ref={fileMenuRef} style={{ position: 'relative' }}>
+          <button onClick={() => setFileMenuOpen((o) => !o)}>File</button>
+          {fileMenuOpen && (
+            <div style={{ position: 'absolute', top: '100%', left: 0, background: 'white', color: 'black', border: '1px solid #ccc', borderRadius: 4, minWidth: 160, zIndex: 100, boxShadow: '0 2px 8px rgba(0,0,0,0.15)' }}>
+              <div style={{ padding: '8px 12px', cursor: 'pointer' }} onClick={() => { manualSave(); setFileMenuOpen(false); }}>Save Local</div>
+              <div style={{ padding: '8px 12px', cursor: 'pointer' }} onClick={() => { saveToFile(); setFileMenuOpen(false); }}>Save to File</div>
+              <div style={{ padding: '8px 12px', cursor: 'pointer' }} onClick={() => { fileInputRef.current?.click(); setFileMenuOpen(false); }}>Open File</div>
+            </div>
+          )}
+        </div>
+        <input ref={fileInputRef} type="file" accept=".json" style={{ display: 'none' }} onChange={openFromFile} />
         <button onClick={() => setView('diagram')}>Diagram</button>
         <button onClick={() => setView('swim')}>Swim Lanes</button>
         <button onClick={() => setView('list')}>Tasks</button>
@@ -743,10 +772,6 @@ export default function App() {
         <button onClick={addBlock}>+ Block</button>
         <button onClick={undo} disabled={history.length === 0}>Undo</button>
         <button onClick={deleteSelected} disabled={!selectedId && !selectedEdgeId} style={{ background: '#dc2626', color: 'white' }}>Delete</button>
-        <button onClick={manualSave}>Save Local</button>
-        <button onClick={saveToFile}>Save to File</button>
-        <button onClick={() => fileInputRef.current?.click()}>Open File</button>
-        <input ref={fileInputRef} type="file" accept=".json" style={{ display: 'none' }} onChange={openFromFile} />
         <button onClick={cutBaseline}>Cut Baseline</button>
         <button onClick={clearSaved} style={{ marginLeft: 8, background: '#dc2626', color: 'white' }}>Clear Saved</button>
         <span style={{ marginLeft: 'auto' }}>Total Cost: ${totalCost.toFixed(0)}</span>
@@ -756,7 +781,7 @@ export default function App() {
         <div style={{ flex: 1, display: 'flex' }}>
           <div style={{ flex: 1 }}>
             <div style={{ padding: '4px 8px', background: '#f1f5f9', fontSize: 13 }}>
-              Left side of a predecessor link always finishes first. Ctrl+Z to undo.
+              Drag from the first task (Predecessor [P]) to the second (Successor [S]). Predecessor always finishes first. Everything else is ASAP. Ctrl+Z to undo.
             </div>
             <ReactFlow
               nodes={displayNodes}
@@ -796,6 +821,17 @@ export default function App() {
                     onChange={(e) => setPercent(selectedId, Number(e.target.value))}
                     style={{ width: '100%', margin: '4px 0 12px' }}
                   />
+                  <label>Hours</label>
+                  <input
+                    type="number"
+                    min="0"
+                    value={selectedNode.data.estimatedHours ?? 0}
+                    onChange={(e) => {
+                      pushHistory();
+                      setNodes((nds) => nds.map((n) => n.id === selectedId ? { ...n, data: { ...n.data, estimatedHours: Number(e.target.value) } } : n));
+                    }}
+                    style={{ width: '100%', margin: '4px 0 12px' }}
+                  />
                 </>
               )}
               <label>Assign Person</label>
@@ -823,7 +859,7 @@ export default function App() {
           {selectedEdgeId && (
             <div style={{ width: 280, borderLeft: '1px solid #ddd', padding: 12, background: '#fafafa' }}>
               <h3>Selected Link</h3>
-              <p>Predecessor link selected.</p>
+              <p>Predecessor → Successor link selected.</p>
               <button onClick={deleteSelected} style={{ marginTop: 12, background: '#dc2626', color: 'white', width: '100%' }}>Delete Link</button>
             </div>
           )}
