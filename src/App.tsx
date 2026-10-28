@@ -11,7 +11,7 @@ import ReactFlow, {
   Handle,
   Position,
 } from 'reactflow';
-import type { Connection, Node } from 'reactflow';
+import type { Connection, Node, Edge } from 'reactflow';
 import 'reactflow/dist/style.css';
 import './App.css';
 
@@ -342,7 +342,6 @@ export default function App() {
 
   const onConnect = useCallback(
     (params: Connection) => {
-      // Still support drag-connect, but treat source as P and target as S
       pushHistory();
       setEdges((eds) =>
         addEdge(
@@ -750,22 +749,18 @@ export default function App() {
   const handleNodeClick = (_: any, node: Node) => {
     setSelectedEdgeId(null);
     if (pendingPredecessor && pendingPredecessor !== node.id) {
-      // Second click creates the link: first = P (source), second = S (target)
       pushHistory();
-      setEdges((eds) =>
-        addEdge(
-          {
-            source: pendingPredecessor,
-            target: node.id,
-            type: 'smoothstep',
-            label: 'P → S',
-            style: { stroke: '#222', strokeWidth: 2.5 },
-            markerEnd: { type: MarkerType.ArrowClosed },
-            zIndex: 2000,
-          },
-          eds
-        )
-      );
+      const newEdge: Edge = {
+        id: `e-${pendingPredecessor}-${node.id}-${Date.now()}`,
+        source: pendingPredecessor,
+        target: node.id,
+        type: 'smoothstep',
+        label: 'P → S',
+        style: { stroke: '#222', strokeWidth: 2.5 },
+        markerEnd: { type: MarkerType.ArrowClosed },
+        zIndex: 2000,
+      };
+      setEdges((eds) => addEdge(newEdge, eds));
       setPendingPredecessor(null);
       setSelectedId(node.id);
     } else if (pendingPredecessor === node.id) {
