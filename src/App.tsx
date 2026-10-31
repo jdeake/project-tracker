@@ -404,7 +404,6 @@ export default function App() {
           {
             ...params,
             type: 'smoothstep',
-            label: 'P → S',
             style: { stroke: '#222', strokeWidth: 2.5 },
             markerEnd: { type: MarkerType.ArrowClosed },
             zIndex: 2000,
@@ -807,6 +806,35 @@ export default function App() {
     border: active ? '1px solid #3b5bdb' : undefined,
   });
 
+  const baselineSummary = useMemo(() => {
+    if (!blA || !blB) return null;
+    const aHours = blA.tasks.reduce((s, t) => s + t.hours, 0);
+    const bHours = blB.tasks.reduce((s, t) => s + t.hours, 0);
+    const aFinish = blA.tasks.reduce((m, t) => (t.finish > m ? t.finish : m), blA.tasks[0]?.finish || '');
+    const bFinish = blB.tasks.reduce((m, t) => (t.finish > m ? t.finish : m), blB.tasks[0]?.finish || '');
+    const aCost = blA.tasks.reduce((s, t) => {
+      const person = people.find((p) => p.id === t.personId);
+      const rate = getRate(t.personId);
+      return s + rate * t.hours * (person?.defaultAllocation ?? 1);
+    }, 0);
+    const bCost = blB.tasks.reduce((s, t) => {
+      const person = people.find((p) => p.id === t.personId);
+      const rate = getRate(t.personId);
+      return s + rate * t.hours * (person?.defaultAllocation ?? 1);
+    }, 0);
+    return {
+      aHours,
+      bHours,
+      hoursDelta: bHours - aHours,
+      aFinish,
+      bFinish,
+      finishDelta: aFinish && bFinish ? daysBetween(aFinish, bFinish) : 0,
+      aCost,
+      bCost,
+      costDelta: bCost - aCost,
+    };
+  }, [blA, blB, people]);
+
   return (
     <ErrorBoundary>
       <div style={{ height: '100vh', display: 'flex', flexDirection: 'column' }}>
@@ -851,7 +879,7 @@ export default function App() {
           <div style={{ flex: 1, display: 'flex' }}>
             <div style={{ flex: 1 }}>
               <div style={{ padding: '4px 8px', background: '#f1f5f9', fontSize: 13 }}>
-                Drag from a handle on the first item (Predecessor [P]) to a handle on the second (Successor [S]). Same type only; tasks same block, blocks same phase. Ctrl+Z to undo.
+                Drag from a handle on the first item (Predecessor) to a handle on the second (Successor). Arrow points to Successor. Same type only; tasks same block, blocks same phase. Ctrl+Z to undo.
               </div>
               <ReactFlow
                 nodes={displayNodes}
@@ -921,7 +949,7 @@ export default function App() {
             {selectedEdgeId && (
               <div style={{ width: 280, borderLeft: '1px solid #ddd', padding: 12, background: '#fafafa' }}>
                 <h3>Selected Link</h3>
-                <p>Predecessor → Successor link selected.</p>
+                <p>Predecessor → Successor link selected. Arrow points to Successor.</p>
                 <button onClick={() => setDeleteConfirm({ type: 'edge', id: selectedEdgeId })} style={{ marginTop: 12, background: '#dc2626', color: 'white', width: '100%' }}>Delete Link</button>
               </div>
             )}
@@ -1099,65 +1127,89 @@ export default function App() {
                 </tbody>
               </table>
             ) : (
-              <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
-                <thead>
-                  <tr style={{ background: '#f1f5f9' }}>
-                    <th style={{ textAlign: 'left', padding: 6 }}>Task</th>
-                    <th style={{ textAlign: 'left', padding: 6 }}>Person</th>
-                    <th style={{ textAlign: 'right', padding: 6 }}>Hours</th>
-                    <th style={{ textAlign: 'right', padding: 6 }}>%</th>
-                    <th style={{ textAlign: 'left', padding: 6 }}>Finish</th>
-                    <th style={{ textAlign: 'right', padding: 6 }}>Cost</th>
-                    {blA && blB && (
-                      <>
-                        <th style={{ textAlign: 'left', padding: 6 }}>A Finish</th>
-                        <th style={{ textAlign: 'left', padding: 6 }}>B Finish</th>
-                        <th style={{ textAlign: 'right', padding: 6 }}>Finish Δ</th>
-                        <th style={{ textAlign: 'right', padding: 6 }}>A Cost</th>
-                        <th style={{ textAlign: 'right', padding: 6 }}>B Cost</th>
-                        <th style={{ textAlign: 'right', padding: 6 }}>Cost Δ</th>
-                      </>
-                    )}
-                  </tr>
-                </thead>
-                <tbody>
-                  {filteredListTasks.map((t) => {
-                    const person = people.find((p) => p.id === t.personId);
-                    const rate = getRate(t.personId);
-                    const cost = rate * t.hours * (person?.defaultAllocation ?? 1);
-                    const aTask = blA?.tasks.find((bt) => bt.id === t.id);
-                    const bTask = blB?.tasks.find((bt) => bt.id === t.id);
-                    const aCost = aTask ? rate * aTask.hours * (person?.defaultAllocation ?? 1) : 0;
-                    const bCost = bTask ? rate * bTask.hours * (person?.defaultAllocation ?? 1) : 0;
-                    const finishDelta = aTask && bTask ? daysBetween(aTask.finish, bTask.finish) : 0;
-                    const costDelta = bCost - aCost;
-                    return (
-                      <tr key={t.id} style={{ borderBottom: '1px solid #eee' }}>
-                        <td style={{ padding: 6 }}>{t.label}</td>
-                        <td style={{ padding: 6 }}>{person?.name ?? '—'}</td>
-                        <td style={{ padding: 6, textAlign: 'right' }}>{t.hours}</td>
-                        <td style={{ padding: 6, textAlign: 'right' }}>{t.pct}%</td>
-                        <td style={{ padding: 6 }}>{t.finish}</td>
-                        <td style={{ padding: 6, textAlign: 'right' }}>${cost.toFixed(0)}</td>
-                        {blA && blB && (
-                          <>
-                            <td style={{ padding: 6 }}>{aTask?.finish ?? '—'}</td>
-                            <td style={{ padding: 6 }}>{bTask?.finish ?? '—'}</td>
-                            <td style={{ padding: 6, textAlign: 'right', color: finishDelta > 0 ? '#dc2626' : finishDelta < 0 ? '#16a34a' : '#666' }}>
-                              {aTask && bTask ? (finishDelta > 0 ? '+' : '') + finishDelta : '—'}
-                            </td>
-                            <td style={{ padding: 6, textAlign: 'right' }}>{aTask ? `$${aCost.toFixed(0)}` : '—'}</td>
-                            <td style={{ padding: 6, textAlign: 'right' }}>{bTask ? `$${bCost.toFixed(0)}` : '—'}</td>
-                            <td style={{ padding: 6, textAlign: 'right', color: costDelta > 0 ? '#dc2626' : costDelta < 0 ? '#16a34a' : '#666' }}>
-                              {aTask && bTask ? (costDelta > 0 ? '+' : '') + `$${costDelta.toFixed(0)}` : '—'}
-                            </td>
-                          </>
-                        )}
-                      </tr>
-                    );
-                  })}
-                </tbody>
-              </table>
+              <>
+                {baselineSummary && (
+                  <div style={{ marginBottom: 16, padding: 12, background: '#f1f5f9', borderRadius: 6, fontSize: 14 }}>
+                    <strong>Baseline Comparison Summary</strong>
+                    <div style={{ marginTop: 8, display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 8 }}>
+                      <div>Hours: A {baselineSummary.aHours}h → B {baselineSummary.bHours}h</div>
+                      <div style={{ color: baselineSummary.hoursDelta > 0 ? '#dc2626' : baselineSummary.hoursDelta < 0 ? '#16a34a' : '#666' }}>
+                        Δ Hours: {baselineSummary.hoursDelta > 0 ? '+' : ''}{baselineSummary.hoursDelta}h
+                      </div>
+                      <div></div>
+                      <div>Complete: A {baselineSummary.aFinish || '—'}</div>
+                      <div>Complete: B {baselineSummary.bFinish || '—'}</div>
+                      <div style={{ color: baselineSummary.finishDelta > 0 ? '#dc2626' : baselineSummary.finishDelta < 0 ? '#16a34a' : '#666' }}>
+                        Δ Finish: {baselineSummary.finishDelta > 0 ? '+' : ''}{baselineSummary.finishDelta} days
+                      </div>
+                      <div>Cost: A ${baselineSummary.aCost.toFixed(0)}</div>
+                      <div>Cost: B ${baselineSummary.bCost.toFixed(0)}</div>
+                      <div style={{ color: baselineSummary.costDelta > 0 ? '#dc2626' : baselineSummary.costDelta < 0 ? '#16a34a' : '#666' }}>
+                        Δ Cost: {baselineSummary.costDelta > 0 ? '+' : ''}${baselineSummary.costDelta.toFixed(0)}
+                      </div>
+                    </div>
+                  </div>
+                )}
+                <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
+                  <thead>
+                    <tr style={{ background: '#f1f5f9' }}>
+                      <th style={{ textAlign: 'left', padding: 6 }}>Task</th>
+                      <th style={{ textAlign: 'left', padding: 6 }}>Person</th>
+                      <th style={{ textAlign: 'right', padding: 6 }}>Hours</th>
+                      <th style={{ textAlign: 'right', padding: 6 }}>%</th>
+                      <th style={{ textAlign: 'left', padding: 6 }}>Finish</th>
+                      <th style={{ textAlign: 'right', padding: 6 }}>Cost</th>
+                      {blA && blB && (
+                        <>
+                          <th style={{ textAlign: 'left', padding: 6 }}>A Finish</th>
+                          <th style={{ textAlign: 'left', padding: 6 }}>B Finish</th>
+                          <th style={{ textAlign: 'right', padding: 6 }}>Finish Δ</th>
+                          <th style={{ textAlign: 'right', padding: 6 }}>A Cost</th>
+                          <th style={{ textAlign: 'right', padding: 6 }}>B Cost</th>
+                          <th style={{ textAlign: 'right', padding: 6 }}>Cost Δ</th>
+                        </>
+                      )}
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {filteredListTasks.map((t) => {
+                      const person = people.find((p) => p.id === t.personId);
+                      const rate = getRate(t.personId);
+                      const cost = rate * t.hours * (person?.defaultAllocation ?? 1);
+                      const aTask = blA?.tasks.find((bt) => bt.id === t.id);
+                      const bTask = blB?.tasks.find((bt) => bt.id === t.id);
+                      const aCost = aTask ? rate * aTask.hours * (person?.defaultAllocation ?? 1) : 0;
+                      const bCost = bTask ? rate * bTask.hours * (person?.defaultAllocation ?? 1) : 0;
+                      const finishDelta = aTask && bTask ? daysBetween(aTask.finish, bTask.finish) : 0;
+                      const costDelta = bCost - aCost;
+                      return (
+                        <tr key={t.id} style={{ borderBottom: '1px solid #eee' }}>
+                          <td style={{ padding: 6 }}>{t.label}</td>
+                          <td style={{ padding: 6 }}>{person?.name ?? '—'}</td>
+                          <td style={{ padding: 6, textAlign: 'right' }}>{t.hours}</td>
+                          <td style={{ padding: 6, textAlign: 'right' }}>{t.pct}%</td>
+                          <td style={{ padding: 6 }}>{t.finish}</td>
+                          <td style={{ padding: 6, textAlign: 'right' }}>${cost.toFixed(0)}</td>
+                          {blA && blB && (
+                            <>
+                              <td style={{ padding: 6 }}>{aTask?.finish ?? '—'}</td>
+                              <td style={{ padding: 6 }}>{bTask?.finish ?? '—'}</td>
+                              <td style={{ padding: 6, textAlign: 'right', color: finishDelta > 0 ? '#dc2626' : finishDelta < 0 ? '#16a34a' : '#666' }}>
+                                {aTask && bTask ? (finishDelta > 0 ? '+' : '') + finishDelta : '—'}
+                              </td>
+                              <td style={{ padding: 6, textAlign: 'right' }}>{aTask ? `$${aCost.toFixed(0)}` : '—'}</td>
+                              <td style={{ padding: 6, textAlign: 'right' }}>{bTask ? `$${bCost.toFixed(0)}` : '—'}</td>
+                              <td style={{ padding: 6, textAlign: 'right', color: costDelta > 0 ? '#dc2626' : costDelta < 0 ? '#16a34a' : '#666' }}>
+                                {aTask && bTask ? (costDelta > 0 ? '+' : '') + `$${costDelta.toFixed(0)}` : '—'}
+                              </td>
+                            </>
+                          )}
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </>
             )}
 
             <p style={{ marginTop: 12 }}>Total Cost: ${totalCost.toFixed(0)}</p>
