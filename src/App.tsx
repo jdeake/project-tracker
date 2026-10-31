@@ -11,7 +11,7 @@ import ReactFlow, {
   Handle,
   Position,
 } from 'reactflow';
-import type { Connection, Node, Edge } from 'reactflow';
+import type { Connection, Node } from 'reactflow';
 import 'reactflow/dist/style.css';
 import './App.css';
 
@@ -201,6 +201,13 @@ function loadSaved() {
   }
 }
 
+function getNodeKind(id: string): 'task' | 'block' | 'phase' | 'other' {
+  if (id.startsWith('task-')) return 'task';
+  if (id.startsWith('block-')) return 'block';
+  if (id.startsWith('phase-')) return 'phase';
+  return 'other';
+}
+
 export default function App() {
   const saved = loadSaved();
   const [nodes, setNodes, onNodesChange] = useNodesState(saved?.nodes || defaultNodes);
@@ -222,7 +229,6 @@ export default function App() {
   const [baselineA, setBaselineA] = useState<string>('');
   const [baselineB, setBaselineB] = useState<string>('');
   const [fileMenuOpen, setFileMenuOpen] = useState(false);
-  const [pendingPredecessor, setPendingPredecessor] = useState<string | null>(null);
   const [baselineModal, setBaselineModal] = useState(false);
   const [baselineName, setBaselineName] = useState('');
   const [deleteConfirm, setDeleteConfirm] = useState<{ type: 'node' | 'edge' | 'baseline'; id?: string } | null>(null);
@@ -255,7 +261,6 @@ export default function App() {
     setBaselines(prev.baselines);
     setSelectedId(null);
     setSelectedEdgeId(null);
-    setPendingPredecessor(null);
   }, [history, setNodes, setEdges]);
 
   useEffect(() => {
@@ -355,7 +360,6 @@ export default function App() {
           setBaselines(data.baselines || []);
           setSelectedId(null);
           setSelectedEdgeId(null);
-          setPendingPredecessor(null);
           alert('File loaded successfully.');
         } else {
           alert('Invalid file format.');
@@ -368,8 +372,32 @@ export default function App() {
     e.target.value = '';
   };
 
+  const canLink = useCallback((sourceId: string, targetId: string): boolean => {
+    if (sourceId === targetId) return false;
+    const sk = getNodeKind(sourceId);
+    const tk = getNodeKind(targetId);
+    if (sk !== tk) return false;
+
+    const sourceNode = nodes.find((n) => n.id === sourceId);
+    const targetNode = nodes.find((n) => n.id === targetId);
+    if (!sourceNode || !targetNode) return false;
+
+    if (sk === 'task') {
+      return !!sourceNode.parentNode && sourceNode.parentNode === targetNode.parentNode;
+    }
+    if (sk === 'block') {
+      return !!sourceNode.parentNode && sourceNode.parentNode === targetNode.parentNode;
+    }
+    if (sk === 'phase') {
+      return true;
+    }
+    return false;
+  }, [nodes]);
+
   const onConnect = useCallback(
     (params: Connection) => {
+      if (!params.source || !params.target) return;
+      if (!canLink(params.source, params.target)) return;
       pushHistory();
       setEdges((eds) =>
         addEdge(
@@ -385,7 +413,7 @@ export default function App() {
         )
       );
     },
-    [setEdges, pushHistory]
+    [setEdges, pushHistory, canLink]
   );
 
   const getDescendants = useCallback((nodeId: string): string[] => {
@@ -409,7 +437,6 @@ export default function App() {
       if (baselineB === id) setBaselineB('');
     }
     setDeleteConfirm(null);
-    setPendingPredecessor(null);
   };
 
   const getEffectivePerson = useCallback((nodeId: string): string | undefined => {
@@ -461,14 +488,13 @@ export default function App() {
       let markers = '';
       if (ps?.isPred) markers += ' [P]';
       if (ps?.isSucc) markers += ' [S]';
-      if (pendingPredecessor === n.id) markers += ' (selecting...)';
       const hoursStr = n.id.startsWith('task-') && hours != null ? ` (${hours}h)` : '';
       const label = person
         ? `${n.data.label}${hoursStr}${markers}\n(${person.name}) ${pct}%`
         : `${n.data.label}${hoursStr}${markers}\n${pct}%`;
       return { ...n, data: { ...n.data, label } };
     });
-  }, [nodes, people, getEffectivePerson, getPercentComplete, predSuccMap, pendingPredecessor]);
+  }, [nodes, people, getEffectivePerson, getPercentComplete, predSuccMap]);
 
   const totalCost = useMemo(() => {
     return nodes
@@ -543,20 +569,20 @@ export default function App() {
   };
 
   const addFromTemplate = (template: TaskTemplate, parentId: string) => {
+    if (!parentId) return;
     pushHistory();
     const siblings = nodes.filter((n) => n.parentNode === parentId && n.id.startsWith('task-'));
     const id = `task-${nextId++}`;
-    setNodes((nds) =>
-      nds.concat({
-        id,
-        data: { label: template.name, estimatedHours: template.estimatedHours, percentComplete: 0 },
-        position: { x: 25 + (siblings.length % 2) * 210, y: 45 + Math.floor(siblings.length / 2) * 75 },
-        parentNode: parentId,
-        extent: 'parent',
-        style: { width: 190, background: '#e8f5e9', whiteSpace: 'pre-line' },
-      })
-    );
-    setTimeout(() => growToFit(parentId), 100);
+    const newTask: Node<TaskData> = {
+      id,
+      data: { label: template.name, estimatedHours: template.estimatedHours, percentComplete: 0 },
+      position: { x: 25 + (siblings.length % 2) * 210, y: 45 + Math.floor(siblings.length / 2) * 75 },
+      parentNode: parentId,
+      extent: 'parent',
+      style: { width: 190, background: '#e8f5e9', whiteSpace: 'pre-line' },
+    };
+    setNodes((nds) => nds.concat(newTask));
+    setTimeout(() => growToFit(parentId), 50);
   };
 
   const assignPerson = (nodeId: string, personId: string | undefined) => {
@@ -774,31 +800,12 @@ export default function App() {
     return { minDate: min, maxDate: max, totalDays: total, dayLabels: labels };
   }, [filteredScheduled]);
 
-  const handleNodeClick = (_: any, node: Node) => {
-    setSelectedEdgeId(null);
-    if (pendingPredecessor && pendingPredecessor !== node.id) {
-      pushHistory();
-      const newEdge: Edge = {
-        id: `e-${pendingPredecessor}-${node.id}-${Date.now()}`,
-        source: pendingPredecessor,
-        target: node.id,
-        type: 'smoothstep',
-        label: 'P → S',
-        style: { stroke: '#222', strokeWidth: 2.5 },
-        markerEnd: { type: MarkerType.ArrowClosed },
-        zIndex: 2000,
-      };
-      setEdges((eds) => addEdge(newEdge, eds));
-      setPendingPredecessor(null);
-      setSelectedId(node.id);
-    } else if (pendingPredecessor === node.id) {
-      setPendingPredecessor(null);
-      setSelectedId(node.id);
-    } else {
-      setPendingPredecessor(node.id);
-      setSelectedId(node.id);
-    }
-  };
+  const tabStyle = (active: boolean) => ({
+    background: active ? '#4a6cf7' : undefined,
+    color: active ? 'white' : undefined,
+    fontWeight: active ? 'bold' as const : 'normal' as const,
+    border: active ? '1px solid #3b5bdb' : undefined,
+  });
 
   return (
     <ErrorBoundary>
@@ -816,12 +823,12 @@ export default function App() {
             )}
           </div>
           <input ref={fileInputRef} type="file" accept=".json" style={{ display: 'none' }} onChange={openFromFile} />
-          <button onClick={() => setView('diagram')}>Diagram</button>
-          <button onClick={() => setView('swim')}>Swim Lanes</button>
-          <button onClick={() => setView('list')}>Tasks</button>
-          <button onClick={() => setView('templates')}>Templates</button>
-          <button onClick={() => setView('people')}>People</button>
-          <button onClick={() => setView('departments')}>Departments</button>
+          <button style={tabStyle(view === 'diagram')} onClick={() => setView('diagram')}>Diagram</button>
+          <button style={tabStyle(view === 'swim')} onClick={() => setView('swim')}>Swim Lanes</button>
+          <button style={tabStyle(view === 'list')} onClick={() => setView('list')}>Tasks</button>
+          <button style={tabStyle(view === 'templates')} onClick={() => setView('templates')}>Templates</button>
+          <button style={tabStyle(view === 'people')} onClick={() => setView('people')}>People</button>
+          <button style={tabStyle(view === 'departments')} onClick={() => setView('departments')}>Departments</button>
           <button onClick={addPhase}>+ Phase</button>
           <button onClick={addBlock}>+ Block</button>
           <button onClick={undo} disabled={history.length === 0}>Undo</button>
@@ -844,8 +851,7 @@ export default function App() {
           <div style={{ flex: 1, display: 'flex' }}>
             <div style={{ flex: 1 }}>
               <div style={{ padding: '4px 8px', background: '#f1f5f9', fontSize: 13 }}>
-                Click first item (Predecessor [P]), then click second item (Successor [S]). Predecessor always finishes first. Everything else is ASAP. Ctrl+Z to undo.
-                {pendingPredecessor && <span style={{ marginLeft: 12, color: '#4a6cf7' }}>Selecting successor for {nodes.find(n => n.id === pendingPredecessor)?.data.label}...</span>}
+                Drag from a handle on the first item (Predecessor [P]) to a handle on the second (Successor [S]). Same type only; tasks same block, blocks same phase. Ctrl+Z to undo.
               </div>
               <ReactFlow
                 nodes={displayNodes}
@@ -853,9 +859,9 @@ export default function App() {
                 onNodesChange={onNodesChange}
                 onEdgesChange={onEdgesChange}
                 onConnect={onConnect}
-                onNodeClick={handleNodeClick}
-                onEdgeClick={(_, edge) => { setSelectedEdgeId(edge.id); setSelectedId(null); setPendingPredecessor(null); }}
-                onPaneClick={() => { setSelectedId(null); setSelectedEdgeId(null); setPendingPredecessor(null); }}
+                onNodeClick={(_, node) => { setSelectedId(node.id); setSelectedEdgeId(null); }}
+                onEdgeClick={(_, edge) => { setSelectedEdgeId(edge.id); setSelectedId(null); }}
+                onPaneClick={() => { setSelectedId(null); setSelectedEdgeId(null); }}
                 nodeTypes={nodeTypes}
                 nodesResizable
                 elevateEdgesOnSelect
@@ -885,17 +891,9 @@ export default function App() {
                       onChange={(e) => setPercent(selectedId, Number(e.target.value))}
                       style={{ width: '100%', margin: '4px 0 12px' }}
                     />
-                    <label>Hours</label>
-                    <input
-                      type="number"
-                      min="0"
-                      value={selectedNode.data.estimatedHours ?? 0}
-                      onChange={(e) => {
-                        pushHistory();
-                        setNodes((nds) => nds.map((n) => n.id === selectedId ? { ...n, data: { ...n.data, estimatedHours: Number(e.target.value) } } : n));
-                      }}
-                      style={{ width: '100%', margin: '4px 0 12px' }}
-                    />
+                    <p style={{ fontSize: 13, margin: '4px 0 12px' }}>
+                      Hours: {selectedNode.data.estimatedHours ?? 0} (set in Templates)
+                    </p>
                   </>
                 )}
                 <label>Assign Person</label>
@@ -959,7 +957,7 @@ export default function App() {
             )}
             <div style={{ display: 'flex', marginBottom: 4, fontSize: 10, color: '#666' }}>
               <div style={{ width: 160, flexShrink: 0 }} />
-              <div style={{ flex: 1, position: 'relative', height: dayLabels.length > 0 ? 28 : 20, overflow: 'hidden' }}>
+              <div style={{ flex: 1, position: 'relative', height: dayLabels.length > 0 ? 28 : 20, overflow: 'visible', paddingRight: 32 }}>
                 {dayLabels.length > 0 ? (
                   dayLabels.map((d, i) => (
                     <span
@@ -993,7 +991,7 @@ export default function App() {
                       Dept {departments.find((d) => d.id === p.departmentId)?.number}
                     </div>
                   </div>
-                  <div style={{ flex: 1, position: 'relative', height: 36, background: '#f8fafc', border: '1px solid #e2e8f0', borderRadius: 4 }}>
+                  <div style={{ flex: 1, position: 'relative', height: 36, background: '#f8fafc', border: '1px solid #e2e8f0', borderRadius: 4, marginRight: 32 }}>
                     {tasks.map((t, i) => {
                       const leftPct = (daysBetween(minDate, t.start) / totalDays) * 100;
                       const widthPct = Math.max((daysBetween(t.start, t.finish) / totalDays) * 100, 1.5);
