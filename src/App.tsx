@@ -231,7 +231,7 @@ export default function App() {
   const [fileMenuOpen, setFileMenuOpen] = useState(false);
   const [baselineModal, setBaselineModal] = useState(false);
   const [baselineName, setBaselineName] = useState('');
-  const [deleteConfirm, setDeleteConfirm] = useState<{ type: 'node' | 'edge' | 'baseline'; id?: string } | null>(null);
+  const [deleteConfirm, setDeleteConfirm] = useState<{ type: 'node' | 'edge' | 'baseline' | 'person'; id?: string } | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const fileMenuRef = useRef<HTMLDivElement>(null);
 
@@ -420,7 +420,7 @@ export default function App() {
     return children.concat(children.flatMap(getDescendants));
   }, [nodes]);
 
-  const performDelete = (type: 'node' | 'edge' | 'baseline', id?: string) => {
+  const performDelete = (type: 'node' | 'edge' | 'baseline' | 'person', id?: string) => {
     pushHistory();
     if (type === 'edge' && id) {
       setEdges((eds) => eds.filter((e) => e.id !== id));
@@ -434,6 +434,13 @@ export default function App() {
       setBaselines((bs) => bs.filter((b) => b.id !== id));
       if (baselineA === id) setBaselineA('');
       if (baselineB === id) setBaselineB('');
+    } else if (type === 'person' && id) {
+      setPeople((ps) => ps.filter((p) => p.id !== id));
+      setNodes((nds) =>
+        nds.map((n) =>
+          n.data.personId === id ? { ...n, data: { ...n.data, personId: undefined } } : n
+        )
+      );
     }
     setDeleteConfirm(null);
   };
@@ -655,15 +662,30 @@ export default function App() {
     };
 
     let guard = 0;
-    while (done.size < taskNodes.length && guard < taskNodes.length * 5) {
+    while (done.size < taskNodes.length && guard < taskNodes.length * 10) {
       guard++;
+      const ready = taskNodes.filter((n) => !done.has(n.id) && isReady(n.id));
+      if (ready.length === 0) break;
+
+      // Prioritize tasks with no predecessors so independent work starts as early as possible
+      ready.sort((a, b) => {
+        const aPreds = mustFinishBefore[a.id].size;
+        const bPreds = mustFinishBefore[b.id].size;
+        if (aPreds !== bPreds) return aPreds - bPreds;
+        const aPerson = getEffectivePerson(a.id);
+        const bPerson = getEffectivePerson(b.id);
+        const aStart = aPerson ? personNext[aPerson] || todayStr() : todayStr();
+        const bStart = bPerson ? personNext[bPerson] || todayStr() : todayStr();
+        return aStart.localeCompare(bStart);
+      });
+
       let scheduledAny = false;
-      for (const node of taskNodes) {
-        if (done.has(node.id) || !isReady(node.id)) continue;
+      for (const node of ready) {
+        if (done.has(node.id)) continue;
 
         const personId = getEffectivePerson(node.id);
         const person = people.find((p) => p.id === personId);
-        let start = personId ? personNext[personId] : todayStr();
+        let start = personId ? personNext[personId] || todayStr() : todayStr();
 
         while (isWeekend(start)) {
           start = addWorkingDays(start, 1);
@@ -671,7 +693,7 @@ export default function App() {
 
         for (const pid of mustFinishBefore[node.id]) {
           const pf = finishMap[pid];
-          if (pf && pf > start) start = addWorkingDays(pf, 1);
+          if (pf && pf >= start) start = addWorkingDays(pf, 1);
         }
 
         const hours = node.data.estimatedHours || 0;
@@ -693,6 +715,7 @@ export default function App() {
         });
         done.add(node.id);
         scheduledAny = true;
+        break; // schedule one at a time so personNext updates correctly
       }
       if (!scheduledAny) break;
     }
@@ -904,10 +927,16 @@ export default function App() {
               </ReactFlow>
             </div>
             {selectedId && selectedNode && (
-              <div style={{ width: 280, borderLeft: '1px solid #ddd', padding: 12, background: '#fafafa', overflow: 'auto' }}>
+              <div style={{ width: 280, borderLeft: '1px solid #ddd', padding: 12, background: '#fafafa', overflow: 'auto' }} onMouseDown={(e) => e.stopPropagation()}>
                 <h3>Selected</h3>
                 <label>Name</label>
-                <input value={selectedNode.data.label} onChange={(e) => renameNode(selectedId, e.target.value)} style={{ width: '100%', margin: '4px 0 12px' }} />
+                <input
+                  value={selectedNode.data.label}
+                  onChange={(e) => renameNode(selectedId, e.target.value)}
+                  onMouseDown={(e) => e.stopPropagation()}
+                  onKeyDown={(e) => e.stopPropagation()}
+                  style={{ width: '100%', margin: '4px 0 12px' }}
+                />
                 {selectedId.startsWith('task-') && (
                   <>
                     <label>% Complete</label>
@@ -917,6 +946,8 @@ export default function App() {
                       max="100"
                       value={selectedNode.data.percentComplete ?? 0}
                       onChange={(e) => setPercent(selectedId, Number(e.target.value))}
+                      onMouseDown={(e) => e.stopPropagation()}
+                      onKeyDown={(e) => e.stopPropagation()}
                       style={{ width: '100%', margin: '4px 0 12px' }}
                     />
                     <p style={{ fontSize: 13, margin: '4px 0 12px' }}>
@@ -1257,6 +1288,7 @@ export default function App() {
                 <span>% alloc</span>
                 <input type="date" value={p.startDate || ''} onChange={(e) => setPeople((ps) => ps.map((x) => x.id === p.id ? { ...x, startDate: e.target.value } : x))} />
                 <span>start</span>
+                <button onClick={() => setDeleteConfirm({ type: 'person', id: p.id })} style={{ background: '#dc2626', color: 'white', fontSize: 12 }}>Remove</button>
               </div>
             ))}
             <button onClick={() => setPeople((ps) => [...ps, { id: `p-${nextId++}`, name: 'New', departmentId: departments[0]?.id || '', defaultAllocation: 1, startDate: todayStr() }])}>+ Person</button>
@@ -1305,6 +1337,7 @@ export default function App() {
                 {deleteConfirm.type === 'node' && 'Delete selected item and all children?'}
                 {deleteConfirm.type === 'edge' && 'Delete selected link?'}
                 {deleteConfirm.type === 'baseline' && 'Delete this baseline?'}
+                {deleteConfirm.type === 'person' && 'Remove this person? Their assignments will be cleared.'}
               </p>
               <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
                 <button onClick={() => setDeleteConfirm(null)}>Cancel</button>
