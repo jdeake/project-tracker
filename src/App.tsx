@@ -66,6 +66,7 @@ type TaskData = {
   personId?: string;
   estimatedHours?: number;
   percentComplete?: number;
+  templateId?: string;
 };
 type ScheduledTask = {
   id: string;
@@ -275,6 +276,25 @@ export default function App() {
   }, [undo]);
 
   useEffect(() => {
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key !== 'Delete' && e.key !== 'Backspace') return;
+      const target = e.target as HTMLElement;
+      if (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.tagName === 'SELECT' || target.isContentEditable) {
+        return;
+      }
+      if (selectedEdgeId) {
+        e.preventDefault();
+        setDeleteConfirm({ type: 'edge', id: selectedEdgeId });
+      } else if (selectedId) {
+        e.preventDefault();
+        setDeleteConfirm({ type: 'node', id: selectedId });
+      }
+    };
+    window.addEventListener('keydown', onKeyDown);
+    return () => window.removeEventListener('keydown', onKeyDown);
+  }, [selectedId, selectedEdgeId]);
+
+  useEffect(() => {
     const onClick = (e: MouseEvent) => {
       if (fileMenuRef.current && !fileMenuRef.current.contains(e.target as unknown as globalThis.Node)) {
         setFileMenuOpen(false);
@@ -312,6 +332,24 @@ export default function App() {
         .catch((err: any) => console.error('Load failed', err));
     }
   }, []);
+
+  // Propagate template hour changes to existing tasks
+  useEffect(() => {
+    setNodes((nds) => {
+      let changed = false;
+      const next = nds.map((n) => {
+        if (!n.id.startsWith('task-') || !n.data.templateId) return n;
+        const tmpl = templates.find((t) => t.id === n.data.templateId);
+        if (!tmpl) return n;
+        if (n.data.estimatedHours !== tmpl.estimatedHours) {
+          changed = true;
+          return { ...n, data: { ...n.data, estimatedHours: tmpl.estimatedHours } };
+        }
+        return n;
+      });
+      return changed ? next : nds;
+    });
+  }, [templates]);
 
   const clearSaved = () => {
     if (window.confirm('Clear all saved data and start over?')) {
@@ -443,6 +481,18 @@ export default function App() {
       );
     }
     setDeleteConfirm(null);
+  };
+
+  const doDeleteSelected = () => {
+    if (selectedEdgeId) {
+      if (window.confirm('Delete selected link?')) {
+        performDelete('edge', selectedEdgeId);
+      }
+    } else if (selectedId) {
+      if (window.confirm('Delete selected item and all children?')) {
+        performDelete('node', selectedId);
+      }
+    }
   };
 
   const getEffectivePerson = useCallback((nodeId: string): string | undefined => {
@@ -581,7 +631,12 @@ export default function App() {
     const id = `task-${nextId++}`;
     const newTask: Node<TaskData> = {
       id,
-      data: { label: template.name, estimatedHours: template.estimatedHours, percentComplete: 0 },
+      data: {
+        label: template.name,
+        estimatedHours: template.estimatedHours,
+        percentComplete: 0,
+        templateId: template.id,
+      },
       position: { x: 25 + (siblings.length % 2) * 210, y: 45 + Math.floor(siblings.length / 2) * 75 },
       parentNode: parentId,
       extent: 'parent',
@@ -667,7 +722,6 @@ export default function App() {
       const ready = taskNodes.filter((n) => !done.has(n.id) && isReady(n.id));
       if (ready.length === 0) break;
 
-      // Prioritize tasks with no predecessors so independent work starts as early as possible
       ready.sort((a, b) => {
         const aPreds = mustFinishBefore[a.id].size;
         const bPreds = mustFinishBefore[b.id].size;
@@ -715,7 +769,7 @@ export default function App() {
         });
         done.add(node.id);
         scheduledAny = true;
-        break; // schedule one at a time so personNext updates correctly
+        break;
       }
       if (!scheduledAny) break;
     }
@@ -858,6 +912,10 @@ export default function App() {
     };
   }, [blA, blB, people]);
 
+  const openDelete = (type: 'node' | 'edge' | 'baseline' | 'person', id?: string) => {
+    setDeleteConfirm({ type, id });
+  };
+
   return (
     <ErrorBoundary>
       <div style={{ height: '100vh', display: 'flex', flexDirection: 'column' }}>
@@ -884,9 +942,11 @@ export default function App() {
           <button onClick={addBlock}>+ Block</button>
           <button onClick={undo} disabled={history.length === 0}>Undo</button>
           <button
-            onClick={() => {
-              if (selectedEdgeId) setDeleteConfirm({ type: 'edge', id: selectedEdgeId });
-              else if (selectedId) setDeleteConfirm({ type: 'node', id: selectedId });
+            onMouseDown={(e) => { e.stopPropagation(); e.preventDefault(); }}
+            onClick={(e) => {
+              e.stopPropagation();
+              e.preventDefault();
+              doDeleteSelected();
             }}
             disabled={!selectedId && !selectedEdgeId}
             style={{ background: '#dc2626', color: 'white' }}
@@ -902,7 +962,7 @@ export default function App() {
           <div style={{ flex: 1, display: 'flex' }}>
             <div style={{ flex: 1 }}>
               <div style={{ padding: '4px 8px', background: '#f1f5f9', fontSize: 13 }}>
-                Drag from a handle on the first item (Predecessor) to a handle on the second (Successor). Arrow points to Successor. Same type only; tasks same block, blocks same phase. Ctrl+Z to undo.
+                Drag from a handle on the first item (Predecessor) to a handle on the second (Successor). Arrow points to Successor. Same type only; tasks same block, blocks same phase. Ctrl+Z to undo. Delete/Backspace to remove selected.
               </div>
               <ReactFlow
                 nodes={displayNodes}
@@ -974,14 +1034,26 @@ export default function App() {
                     ))}
                   </>
                 )}
-                <button onClick={() => setDeleteConfirm({ type: 'node', id: selectedId })} style={{ marginTop: 12, background: '#dc2626', color: 'white', width: '100%' }}>Delete Selected</button>
+                <button
+                  onMouseDown={(e) => { e.stopPropagation(); e.preventDefault(); }}
+                  onClick={(e) => { e.stopPropagation(); e.preventDefault(); doDeleteSelected(); }}
+                  style={{ marginTop: 12, background: '#dc2626', color: 'white', width: '100%' }}
+                >
+                  Delete Selected
+                </button>
               </div>
             )}
             {selectedEdgeId && (
               <div style={{ width: 280, borderLeft: '1px solid #ddd', padding: 12, background: '#fafafa' }}>
                 <h3>Selected Link</h3>
                 <p>Predecessor → Successor link selected. Arrow points to Successor.</p>
-                <button onClick={() => setDeleteConfirm({ type: 'edge', id: selectedEdgeId })} style={{ marginTop: 12, background: '#dc2626', color: 'white', width: '100%' }}>Delete Link</button>
+                <button
+                  onMouseDown={(e) => { e.stopPropagation(); e.preventDefault(); }}
+                  onClick={(e) => { e.stopPropagation(); e.preventDefault(); doDeleteSelected(); }}
+                  style={{ marginTop: 12, background: '#dc2626', color: 'white', width: '100%' }}
+                >
+                  Delete Link
+                </button>
               </div>
             )}
           </div>
@@ -1253,7 +1325,7 @@ export default function App() {
                     <span style={{ flex: 1 }}>
                       <strong>{b.name}</strong> — created {b.date} ({b.tasks.length} tasks)
                     </span>
-                    <button onClick={() => setDeleteConfirm({ type: 'baseline', id: b.id })} style={{ background: '#dc2626', color: 'white', fontSize: 12 }}>Delete</button>
+                    <button onClick={() => openDelete('baseline', b.id)} style={{ background: '#dc2626', color: 'white', fontSize: 12 }}>Delete</button>
                   </div>
                 ))}
               </div>
@@ -1264,10 +1336,25 @@ export default function App() {
         {view === 'templates' && (
           <div style={{ flex: 1, padding: 16 }}>
             <h2>Task Templates</h2>
+            <p style={{ fontSize: 13, color: '#555', marginBottom: 12 }}>
+              Changing hours here updates every existing task that was created from that template.
+            </p>
             {templates.map((tmpl) => (
               <div key={tmpl.id} style={{ marginBottom: 8 }}>
-                <input value={tmpl.name} onChange={(e) => setTemplates((ts) => ts.map((x) => x.id === tmpl.id ? { ...x, name: e.target.value } : x))} />
-                <input type="number" value={tmpl.estimatedHours} onChange={(e) => setTemplates((ts) => ts.map((x) => x.id === tmpl.id ? { ...x, estimatedHours: Number(e.target.value) } : x))} style={{ width: 60, marginLeft: 8 }} />
+                <input
+                  value={tmpl.name}
+                  onChange={(e) => setTemplates((ts) => ts.map((x) => x.id === tmpl.id ? { ...x, name: e.target.value } : x))}
+                  onMouseDown={(e) => e.stopPropagation()}
+                  onKeyDown={(e) => e.stopPropagation()}
+                />
+                <input
+                  type="number"
+                  value={tmpl.estimatedHours}
+                  onChange={(e) => setTemplates((ts) => ts.map((x) => x.id === tmpl.id ? { ...x, estimatedHours: Number(e.target.value) } : x))}
+                  onMouseDown={(e) => e.stopPropagation()}
+                  onKeyDown={(e) => e.stopPropagation()}
+                  style={{ width: 60, marginLeft: 8 }}
+                />
                 hours
               </div>
             ))}
@@ -1280,15 +1367,30 @@ export default function App() {
             <h2>People</h2>
             {people.map((p) => (
               <div key={p.id} style={{ marginBottom: 12, display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
-                <input value={p.name} onChange={(e) => setPeople((ps) => ps.map((x) => x.id === p.id ? { ...x, name: e.target.value } : x))} style={{ width: 120 }} />
+                <input
+                  value={p.name}
+                  onChange={(e) => setPeople((ps) => ps.map((x) => x.id === p.id ? { ...x, name: e.target.value } : x))}
+                  onMouseDown={(e) => e.stopPropagation()}
+                  onKeyDown={(e) => e.stopPropagation()}
+                  style={{ width: 120 }}
+                />
                 <select value={p.departmentId} onChange={(e) => setPeople((ps) => ps.map((x) => x.id === p.id ? { ...x, departmentId: e.target.value } : x))}>
                   {departments.map((d) => <option key={d.id} value={d.id}>Dept {d.number}</option>)}
                 </select>
-                <input type="number" min="0" max="100" value={(p.defaultAllocation * 100).toFixed(0)} onChange={(e) => setPeople((ps) => ps.map((x) => x.id === p.id ? { ...x, defaultAllocation: Number(e.target.value) / 100 } : x))} style={{ width: 60 }} />
+                <input
+                  type="number"
+                  min="0"
+                  max="100"
+                  value={(p.defaultAllocation * 100).toFixed(0)}
+                  onChange={(e) => setPeople((ps) => ps.map((x) => x.id === p.id ? { ...x, defaultAllocation: Number(e.target.value) / 100 } : x))}
+                  onMouseDown={(e) => e.stopPropagation()}
+                  onKeyDown={(e) => e.stopPropagation()}
+                  style={{ width: 60 }}
+                />
                 <span>% alloc</span>
                 <input type="date" value={p.startDate || ''} onChange={(e) => setPeople((ps) => ps.map((x) => x.id === p.id ? { ...x, startDate: e.target.value } : x))} />
                 <span>start</span>
-                <button onClick={() => setDeleteConfirm({ type: 'person', id: p.id })} style={{ background: '#dc2626', color: 'white', fontSize: 12 }}>Remove</button>
+                <button onClick={() => openDelete('person', p.id)} style={{ background: '#dc2626', color: 'white', fontSize: 12 }}>Remove</button>
               </div>
             ))}
             <button onClick={() => setPeople((ps) => [...ps, { id: `p-${nextId++}`, name: 'New', departmentId: departments[0]?.id || '', defaultAllocation: 1, startDate: todayStr() }])}>+ Person</button>
@@ -1300,9 +1402,22 @@ export default function App() {
             <h2>Departments</h2>
             {departments.map((d) => (
               <div key={d.id} style={{ marginBottom: 10, display: 'flex', gap: 8, alignItems: 'center' }}>
-                <input value={d.number} onChange={(e) => setDepartments((ds) => ds.map((x) => x.id === d.id ? { ...x, number: e.target.value } : x))} style={{ width: 80 }} />
+                <input
+                  value={d.number}
+                  onChange={(e) => setDepartments((ds) => ds.map((x) => x.id === d.id ? { ...x, number: e.target.value } : x))}
+                  onMouseDown={(e) => e.stopPropagation()}
+                  onKeyDown={(e) => e.stopPropagation()}
+                  style={{ width: 80 }}
+                />
                 <span>rate $</span>
-                <input type="number" value={d.rate} onChange={(e) => setDepartments((ds) => ds.map((x) => x.id === d.id ? { ...x, rate: Number(e.target.value) } : x))} style={{ width: 80 }} />
+                <input
+                  type="number"
+                  value={d.rate}
+                  onChange={(e) => setDepartments((ds) => ds.map((x) => x.id === d.id ? { ...x, rate: Number(e.target.value) } : x))}
+                  onMouseDown={(e) => e.stopPropagation()}
+                  onKeyDown={(e) => e.stopPropagation()}
+                  style={{ width: 80 }}
+                />
                 /h
               </div>
             ))}
@@ -1330,8 +1445,11 @@ export default function App() {
         )}
 
         {deleteConfirm && (
-          <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.5)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000 }}>
-            <div style={{ background: 'white', padding: 24, borderRadius: 8, minWidth: 280 }}>
+          <div
+            style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.5)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 2000 }}
+            onMouseDown={(e) => e.stopPropagation()}
+          >
+            <div style={{ background: 'white', padding: 24, borderRadius: 8, minWidth: 280 }} onMouseDown={(e) => e.stopPropagation()}>
               <h3>Confirm Delete</h3>
               <p>
                 {deleteConfirm.type === 'node' && 'Delete selected item and all children?'}
@@ -1340,8 +1458,23 @@ export default function App() {
                 {deleteConfirm.type === 'person' && 'Remove this person? Their assignments will be cleared.'}
               </p>
               <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
-                <button onClick={() => setDeleteConfirm(null)}>Cancel</button>
-                <button onClick={() => performDelete(deleteConfirm.type, deleteConfirm.id)} style={{ background: '#dc2626', color: 'white' }}>Delete</button>
+                <button
+                  onMouseDown={(e) => { e.stopPropagation(); e.preventDefault(); }}
+                  onClick={(e) => { e.stopPropagation(); e.preventDefault(); setDeleteConfirm(null); }}
+                >
+                  Cancel
+                </button>
+                <button
+                  onMouseDown={(e) => { e.stopPropagation(); e.preventDefault(); }}
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    e.preventDefault();
+                    performDelete(deleteConfirm.type, deleteConfirm.id);
+                  }}
+                  style={{ background: '#dc2626', color: 'white' }}
+                >
+                  Delete
+                </button>
               </div>
             </div>
           </div>
