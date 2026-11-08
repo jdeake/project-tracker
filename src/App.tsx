@@ -85,6 +85,7 @@ type Baseline = {
 };
 
 const STORAGE_KEY = 'project-tracker-v1';
+const APP_VERSION = '2026-11-08b';
 
 const defaultDepartments: Department[] = [
   { id: 'd1', number: '100', rate: 85 },
@@ -207,6 +208,10 @@ function getNodeKind(id: string): 'task' | 'block' | 'phase' | 'other' {
   if (id.startsWith('block-')) return 'block';
   if (id.startsWith('phase-')) return 'phase';
   return 'other';
+}
+
+function stopKey(e: React.KeyboardEvent | React.MouseEvent) {
+  e.stopPropagation();
 }
 
 export default function App() {
@@ -333,22 +338,14 @@ export default function App() {
     }
   }, []);
 
-  // Propagate template hour changes to existing tasks
-  useEffect(() => {
-    setNodes((nds) => {
-      let changed = false;
-      const next = nds.map((n) => {
-        if (!n.id.startsWith('task-') || !n.data.templateId) return n;
-        const tmpl = templates.find((t) => t.id === n.data.templateId);
-        if (!tmpl) return n;
-        if (n.data.estimatedHours !== tmpl.estimatedHours) {
-          changed = true;
-          return { ...n, data: { ...n.data, estimatedHours: tmpl.estimatedHours } };
-        }
-        return n;
-      });
-      return changed ? next : nds;
-    });
+  const getLiveHours = useCallback((node: Node<TaskData>): number => {
+    if (node.data.templateId) {
+      const tmpl = templates.find((t) => t.id === node.data.templateId);
+      if (tmpl) return tmpl.estimatedHours;
+    }
+    const byName = templates.find((t) => t.name === node.data.label);
+    if (byName) return byName.estimatedHours;
+    return node.data.estimatedHours ?? 0;
   }, [templates]);
 
   const clearSaved = () => {
@@ -539,7 +536,7 @@ export default function App() {
       const personId = getEffectivePerson(n.id);
       const person = people.find((p) => p.id === personId);
       const pct = getPercentComplete(n.id);
-      const hours = n.data.estimatedHours;
+      const hours = n.id.startsWith('task-') ? getLiveHours(n) : n.data.estimatedHours;
       const ps = predSuccMap[n.id];
       let markers = '';
       if (ps?.isPred) markers += ' [P]';
@@ -550,7 +547,7 @@ export default function App() {
         : `${n.data.label}${hoursStr}${markers}\n${pct}%`;
       return { ...n, data: { ...n.data, label } };
     });
-  }, [nodes, people, getEffectivePerson, getPercentComplete, predSuccMap]);
+  }, [nodes, people, getEffectivePerson, getPercentComplete, predSuccMap, getLiveHours]);
 
   const totalCost = useMemo(() => {
     return nodes
@@ -558,12 +555,12 @@ export default function App() {
       .reduce((sum, t) => {
         const personId = getEffectivePerson(t.id);
         const rate = getRate(personId);
-        const hours = t.data.estimatedHours ?? 0;
+        const hours = getLiveHours(t);
         const person = people.find((p) => p.id === personId);
         if (!rate || !hours || !person) return sum;
         return sum + rate * hours * (person.defaultAllocation ?? 1);
       }, 0);
-  }, [nodes, people, departments, getEffectivePerson]);
+  }, [nodes, people, departments, getEffectivePerson, getLiveHours]);
 
   const growToFit = (parentId: string) => {
     setNodes((nds) => {
@@ -750,7 +747,7 @@ export default function App() {
           if (pf && pf >= start) start = addWorkingDays(pf, 1);
         }
 
-        const hours = node.data.estimatedHours || 0;
+        const hours = getLiveHours(node);
         const alloc = person?.defaultAllocation ?? 1;
         const workDaysNeeded = Math.max(Math.ceil(hours / (8 * Math.max(alloc, 0.1))), 1);
         const finish = addWorkingDays(start, workDaysNeeded - 1);
@@ -783,14 +780,14 @@ export default function App() {
           personId,
           start: todayStr(),
           finish: todayStr(),
-          hours: node.data.estimatedHours || 0,
+          hours: getLiveHours(node),
           pct: node.data.percentComplete ?? 0,
         });
       }
     }
 
     return result;
-  }, [nodes, edges, people, getEffectivePerson]);
+  }, [nodes, edges, people, getEffectivePerson, getLiveHours]);
 
   const confirmCutBaseline = () => {
     const name = baselineName.trim() || `Baseline ${baselines.length + 1}`;
@@ -921,6 +918,7 @@ export default function App() {
       <div style={{ height: '100vh', display: 'flex', flexDirection: 'column' }}>
         <header style={{ padding: '8px 16px', background: '#1e293b', color: 'white', display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
           <strong>Project Tracker</strong>
+          <span style={{ fontSize: 11, opacity: 0.7 }}>{APP_VERSION}</span>
           <div ref={fileMenuRef} style={{ position: 'relative' }}>
             <button onClick={() => setFileMenuOpen((o) => !o)}>File</button>
             {fileMenuOpen && (
@@ -993,8 +991,8 @@ export default function App() {
                 <input
                   value={selectedNode.data.label}
                   onChange={(e) => renameNode(selectedId, e.target.value)}
-                  onMouseDown={(e) => e.stopPropagation()}
-                  onKeyDown={(e) => e.stopPropagation()}
+                  onMouseDown={stopKey}
+                  onKeyDown={stopKey}
                   style={{ width: '100%', margin: '4px 0 12px' }}
                 />
                 {selectedId.startsWith('task-') && (
@@ -1006,12 +1004,12 @@ export default function App() {
                       max="100"
                       value={selectedNode.data.percentComplete ?? 0}
                       onChange={(e) => setPercent(selectedId, Number(e.target.value))}
-                      onMouseDown={(e) => e.stopPropagation()}
-                      onKeyDown={(e) => e.stopPropagation()}
+                      onMouseDown={stopKey}
+                      onKeyDown={stopKey}
                       style={{ width: '100%', margin: '4px 0 12px' }}
                     />
                     <p style={{ fontSize: 13, margin: '4px 0 12px' }}>
-                      Hours: {selectedNode.data.estimatedHours ?? 0} (set in Templates)
+                      Hours: {getLiveHours(selectedNode)} (set in Templates)
                     </p>
                   </>
                 )}
@@ -1337,23 +1335,24 @@ export default function App() {
           <div style={{ flex: 1, padding: 16 }}>
             <h2>Task Templates</h2>
             <p style={{ fontSize: 13, color: '#555', marginBottom: 12 }}>
-              Changing hours here updates every existing task that was created from that template.
+              Changing hours here updates every task that matches this template (by id or by name). Diagram, task list, cost, and schedule all follow.
             </p>
             {templates.map((tmpl) => (
               <div key={tmpl.id} style={{ marginBottom: 8 }}>
                 <input
                   value={tmpl.name}
                   onChange={(e) => setTemplates((ts) => ts.map((x) => x.id === tmpl.id ? { ...x, name: e.target.value } : x))}
-                  onMouseDown={(e) => e.stopPropagation()}
-                  onKeyDown={(e) => e.stopPropagation()}
+                  onMouseDown={stopKey}
+                  onKeyDown={stopKey}
                 />
                 <input
                   type="number"
                   value={tmpl.estimatedHours}
                   onChange={(e) => setTemplates((ts) => ts.map((x) => x.id === tmpl.id ? { ...x, estimatedHours: Number(e.target.value) } : x))}
-                  onMouseDown={(e) => e.stopPropagation()}
-                  onKeyDown={(e) => e.stopPropagation()}
-                  style={{ width: 60, marginLeft: 8 }}
+                  onMouseDown={stopKey}
+                  onKeyDown={stopKey}
+                  onKeyPress={stopKey}
+                  style={{ width: 70, marginLeft: 8 }}
                 />
                 hours
               </div>
@@ -1370,8 +1369,8 @@ export default function App() {
                 <input
                   value={p.name}
                   onChange={(e) => setPeople((ps) => ps.map((x) => x.id === p.id ? { ...x, name: e.target.value } : x))}
-                  onMouseDown={(e) => e.stopPropagation()}
-                  onKeyDown={(e) => e.stopPropagation()}
+                  onMouseDown={stopKey}
+                  onKeyDown={stopKey}
                   style={{ width: 120 }}
                 />
                 <select value={p.departmentId} onChange={(e) => setPeople((ps) => ps.map((x) => x.id === p.id ? { ...x, departmentId: e.target.value } : x))}>
@@ -1383,8 +1382,8 @@ export default function App() {
                   max="100"
                   value={(p.defaultAllocation * 100).toFixed(0)}
                   onChange={(e) => setPeople((ps) => ps.map((x) => x.id === p.id ? { ...x, defaultAllocation: Number(e.target.value) / 100 } : x))}
-                  onMouseDown={(e) => e.stopPropagation()}
-                  onKeyDown={(e) => e.stopPropagation()}
+                  onMouseDown={stopKey}
+                  onKeyDown={stopKey}
                   style={{ width: 60 }}
                 />
                 <span>% alloc</span>
@@ -1405,8 +1404,8 @@ export default function App() {
                 <input
                   value={d.number}
                   onChange={(e) => setDepartments((ds) => ds.map((x) => x.id === d.id ? { ...x, number: e.target.value } : x))}
-                  onMouseDown={(e) => e.stopPropagation()}
-                  onKeyDown={(e) => e.stopPropagation()}
+                  onMouseDown={stopKey}
+                  onKeyDown={stopKey}
                   style={{ width: 80 }}
                 />
                 <span>rate $</span>
@@ -1414,8 +1413,8 @@ export default function App() {
                   type="number"
                   value={d.rate}
                   onChange={(e) => setDepartments((ds) => ds.map((x) => x.id === d.id ? { ...x, rate: Number(e.target.value) } : x))}
-                  onMouseDown={(e) => e.stopPropagation()}
-                  onKeyDown={(e) => e.stopPropagation()}
+                  onMouseDown={stopKey}
+                  onKeyDown={stopKey}
                   style={{ width: 80 }}
                 />
                 /h
