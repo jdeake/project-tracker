@@ -85,7 +85,7 @@ type Baseline = {
 };
 
 const STORAGE_KEY = 'project-tracker-v1';
-const APP_VERSION = '2026-11-08b';
+const APP_VERSION = '2026-11-22A';
 
 const defaultDepartments: Department[] = [
   { id: 'd1', number: '100', rate: 85 },
