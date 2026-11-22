@@ -16,6 +16,9 @@ function createWindow() {
     },
   });
 
+  // Open DevTools so we can see errors in the packaged app
+  mainWindow.webContents.openDevTools();
+
   // Start a tiny local server so the app loads over http:// instead of file://
   const expressApp = express();
   const distPath = path.join(__dirname, 'dist');
