@@ -134,7 +134,14 @@ const defaultNodes: Node<TaskData>[] = [
   },
 ];
 
-let nextId = 100;
+function getNextId(prefix: string, existingNodes: Node[]): string {
+  const nums = existingNodes
+    .filter((n) => n.id.startsWith(prefix + '-'))
+    .map((n) => parseInt(n.id.split('-')[1], 10))
+    .filter((n) => !isNaN(n));
+  const max = nums.length ? Math.max(...nums) : 0;
+  return `${prefix}-${max + 1}`;
+}
 
 function isWeekend(dateStr: string): boolean {
   const d = new Date(dateStr + 'T00:00:00');
@@ -586,7 +593,7 @@ export default function App() {
 
   const addPhase = () => {
     pushHistory();
-    const id = `phase-${nextId++}`;
+    const id = getNextId('phase', nodes);
     setNodes((nds) =>
       nds.concat({
         id,
@@ -606,7 +613,7 @@ export default function App() {
         : nodes.find((n) => n.id.startsWith('phase-'))?.id;
     if (!parent) return;
     const siblings = nodes.filter((n) => n.parentNode === parent && n.id.startsWith('block-'));
-    const id = `block-${nextId++}`;
+    const id = getNextId('block', nodes);
     setNodes((nds) =>
       nds.concat({
         id,
@@ -625,7 +632,7 @@ export default function App() {
     if (!parentId) return;
     pushHistory();
     const siblings = nodes.filter((n) => n.parentNode === parentId && n.id.startsWith('task-'));
-    const id = `task-${nextId++}`;
+    const id = getNextId('task', nodes);
     const newTask: Node<TaskData> = {
       id,
       data: {
@@ -1357,7 +1364,7 @@ export default function App() {
                 hours
               </div>
             ))}
-            <button onClick={() => setTemplates((ts) => [...ts, { id: `tmpl-${nextId++}`, name: 'New', estimatedHours: 8 }])}>+ Template</button>
+            <button onClick={() => setTemplates((ts) => [...ts, { id: `tmpl-${Date.now()}`, name: 'New', estimatedHours: 8 }])}>+ Template</button>
           </div>
         )}
 
@@ -1392,7 +1399,7 @@ export default function App() {
                 <button onClick={() => openDelete('person', p.id)} style={{ background: '#dc2626', color: 'white', fontSize: 12 }}>Remove</button>
               </div>
             ))}
-            <button onClick={() => setPeople((ps) => [...ps, { id: `p-${nextId++}`, name: 'New', departmentId: departments[0]?.id || '', defaultAllocation: 1, startDate: todayStr() }])}>+ Person</button>
+            <button onClick={() => setPeople((ps) => [...ps, { id: `p-${Date.now()}`, name: 'New', departmentId: departments[0]?.id || '', defaultAllocation: 1, startDate: todayStr() }])}>+ Person</button>
           </div>
         )}
 
@@ -1420,7 +1427,7 @@ export default function App() {
                 /h
               </div>
             ))}
-            <button onClick={() => setDepartments((ds) => [...ds, { id: `d-${nextId++}`, number: '999', rate: 75 }])}>+ Department</button>
+            <button onClick={() => setDepartments((ds) => [...ds, { id: `d-${Date.now()}`, number: '999', rate: 75 }])}>+ Department</button>
           </div>
         )}
 
