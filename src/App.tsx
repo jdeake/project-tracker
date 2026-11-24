@@ -67,6 +67,7 @@ type TaskData = {
   estimatedHours?: number;
   percentComplete?: number;
   templateId?: string;
+  notes?: string;
 };
 type ScheduledTask = {
   id: string;
@@ -674,6 +675,13 @@ export default function App() {
     );
   };
 
+  const setNotes = (nodeId: string, notes: string) => {
+    pushHistory();
+    setNodes((nds) =>
+      nds.map((n) => (n.id === nodeId ? { ...n, data: { ...n.data, notes } } : n))
+    );
+  };
+
   const selectedNode = nodes.find((n) => n.id === selectedId);
 
   const scheduledTasks: ScheduledTask[] = useMemo(() => {
@@ -1018,6 +1026,15 @@ export default function App() {
                     <p style={{ fontSize: 13, margin: '4px 0 12px' }}>
                       Hours: {getLiveHours(selectedNode)} (set in Templates)
                     </p>
+                    <label>Notes</label>
+                    <textarea
+                      value={selectedNode.data.notes || ''}
+                      onChange={(e) => setNotes(selectedId, e.target.value)}
+                      onMouseDown={stopKey}
+                      onKeyDown={stopKey}
+                      placeholder="Status notes..."
+                      style={{ width: '100%', height: 80, margin: '4px 0 12px', resize: 'vertical' }}
+                    />
                   </>
                 )}
                 <label>Assign Person</label>
@@ -1134,14 +1151,15 @@ export default function App() {
                       return (
                         <div
                           key={t.id}
-                          title={`${t.label}\n${t.start} → ${t.finish}\n${t.pct}%`}
+                          title={`${t.label}\n${t.start} → ${t.finish}\n${t.pct}%\nClick to edit`}
+                          onClick={() => setSelectedId(t.id)}
                           style={{
                             position: 'absolute',
                             left: `${leftPct}%`,
                             width: `${widthPct}%`,
                             top: 6,
                             height: 24,
-                            background: barColors[i % barColors.length],
+                            background: selectedId === t.id ? '#1d4ed8' : barColors[i % barColors.length],
                             borderRadius: 4,
                             color: 'white',
                             fontSize: 11,
@@ -1150,6 +1168,8 @@ export default function App() {
                             paddingLeft: 6,
                             overflow: 'hidden',
                             whiteSpace: 'nowrap',
+                            cursor: 'pointer',
+                            outline: selectedId === t.id ? '2px solid #1e40af' : 'none',
                           }}
                         >
                           <div
@@ -1171,6 +1191,45 @@ export default function App() {
                 </div>
               );
             })}
+            {selectedId && nodes.find((n) => n.id === selectedId) && (
+              <div style={{ marginTop: 20, padding: 16, background: '#f1f5f9', borderRadius: 8, border: '1px solid #cbd5e1' }}>
+                <h3 style={{ marginTop: 0 }}>Edit Task: {nodes.find((n) => n.id === selectedId)?.data.label}</h3>
+                <div style={{ display: 'flex', gap: 16, flexWrap: 'wrap', alignItems: 'flex-end' }}>
+                  <div>
+                    <label style={{ fontSize: 12, display: 'block' }}>% Complete</label>
+                    <input
+                      type="number"
+                      min="0"
+                      max="100"
+                      value={nodes.find((n) => n.id === selectedId)?.data.percentComplete ?? 0}
+                      onChange={(e) => setPercent(selectedId, Number(e.target.value))}
+                      style={{ width: 80 }}
+                    />
+                  </div>
+                  <div>
+                    <label style={{ fontSize: 12, display: 'block' }}>Assign Person</label>
+                    <select
+                      value={nodes.find((n) => n.id === selectedId)?.data.personId || ''}
+                      onChange={(e) => assignPerson(selectedId, e.target.value || undefined)}
+                      style={{ minWidth: 140 }}
+                    >
+                      <option value="">— none —</option>
+                      {people.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
+                    </select>
+                  </div>
+                  <div style={{ flex: 1, minWidth: 200 }}>
+                    <label style={{ fontSize: 12, display: 'block' }}>Notes</label>
+                    <input
+                      value={nodes.find((n) => n.id === selectedId)?.data.notes || ''}
+                      onChange={(e) => setNotes(selectedId, e.target.value)}
+                      placeholder="Status notes..."
+                      style={{ width: '100%' }}
+                    />
+                  </div>
+                  <button onClick={() => setSelectedId(null)} style={{ background: '#64748b', color: 'white' }}>Close</button>
+                </div>
+              </div>
+            )}
           </div>
         )}
 
@@ -1210,6 +1269,7 @@ export default function App() {
                     <th style={{ textAlign: 'left', padding: 6 }}>Person</th>
                     <th style={{ textAlign: 'right', padding: 6 }}>Hours</th>
                     <th style={{ textAlign: 'right', padding: 6 }}>%</th>
+                    <th style={{ textAlign: 'left', padding: 6 }}>Notes</th>
                     <th style={{ textAlign: 'left', padding: 6 }}>Start</th>
                     <th style={{ textAlign: 'left', padding: 6 }}>Finish</th>
                     <th style={{ textAlign: 'right', padding: 6 }}>Cost</th>
@@ -1220,12 +1280,39 @@ export default function App() {
                     const person = people.find((p) => p.id === t.personId);
                     const rate = getRate(t.personId);
                     const cost = rate * t.hours * (person?.defaultAllocation ?? 1);
+                    const node = nodes.find((n) => n.id === t.id);
                     return (
                       <tr key={t.id} style={{ borderBottom: '1px solid #eee' }}>
                         <td style={{ padding: 6 }}>{t.label}</td>
-                        <td style={{ padding: 6 }}>{person?.name ?? '—'}</td>
+                        <td style={{ padding: 6 }}>
+                          <select
+                            value={node?.data.personId || ''}
+                            onChange={(e) => assignPerson(t.id, e.target.value || undefined)}
+                            style={{ width: 120 }}
+                          >
+                            <option value="">— none —</option>
+                            {people.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
+                          </select>
+                        </td>
                         <td style={{ padding: 6, textAlign: 'right' }}>{t.hours}</td>
-                        <td style={{ padding: 6, textAlign: 'right' }}>{t.pct}%</td>
+                        <td style={{ padding: 6, textAlign: 'right' }}>
+                          <input
+                            type="number"
+                            min="0"
+                            max="100"
+                            value={node?.data.percentComplete ?? 0}
+                            onChange={(e) => setPercent(t.id, Number(e.target.value))}
+                            style={{ width: 60, textAlign: 'right' }}
+                          />
+                        </td>
+                        <td style={{ padding: 6 }}>
+                          <input
+                            value={node?.data.notes || ''}
+                            onChange={(e) => setNotes(t.id, e.target.value)}
+                            placeholder="notes..."
+                            style={{ width: 160 }}
+                          />
+                        </td>
                         <td style={{ padding: 6 }}>{t.start}</td>
                         <td style={{ padding: 6 }}>{t.finish}</td>
                         <td style={{ padding: 6, textAlign: 'right' }}>${cost.toFixed(0)}</td>
@@ -1355,10 +1442,13 @@ export default function App() {
                 <input
                   type="number"
                   value={tmpl.estimatedHours}
-                  onChange={(e) => setTemplates((ts) => ts.map((x) => x.id === tmpl.id ? { ...x, estimatedHours: Number(e.target.value) } : x))}
-                  onMouseDown={stopKey}
-                  onKeyDown={stopKey}
-                  onKeyPress={stopKey}
+                  onChange={(e) => {
+                    const v = e.target.value;
+                    setTemplates((ts) => ts.map((x) => x.id === tmpl.id ? { ...x, estimatedHours: v === '' ? 0 : Number(v) } : x));
+                  }}
+                  onMouseDown={(e) => e.stopPropagation()}
+                  onKeyDown={(e) => e.stopPropagation()}
+                  onClick={(e) => e.stopPropagation()}
                   style={{ width: 70, marginLeft: 8 }}
                 />
                 hours
