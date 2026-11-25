@@ -221,6 +221,10 @@ function getNodeKind(id: string): 'task' | 'block' | 'phase' | 'other' {
 
 function stopKey(e: React.KeyboardEvent | React.MouseEvent) {
   e.stopPropagation();
+  // Also stop capture-phase so React Flow can't steal the key
+  if ('nativeEvent' in e && e.nativeEvent) {
+    e.nativeEvent.stopImmediatePropagation?.();
+  }
 }
 
 export default function App() {
@@ -341,6 +345,7 @@ export default function App() {
             setPeople(data.people || defaultPeople);
             setTemplates(data.templates || defaultTemplates);
             setBaselines(data.baselines || []);
+            setTimeout(() => { if (document.activeElement instanceof HTMLElement) document.activeElement.blur(); }, 100);
           }
         })
         .catch((err: any) => console.error('Load failed', err));
@@ -786,7 +791,17 @@ export default function App() {
           ? node.data.allocation
           : (person?.defaultAllocation ?? 1);
         const workDaysNeeded = Math.max(Math.ceil(hours / (8 * Math.max(alloc, 0.1))), 1);
-        const finish = addWorkingDays(start, workDaysNeeded - 1);
+        let finish = addWorkingDays(start, workDaysNeeded - 1);
+
+        // Incomplete tasks keep pushing forward until 100%
+        const pct = node.data.percentComplete ?? 0;
+        const today = todayStr();
+        if (pct < 100 && today >= start) {
+          const remainingFraction = (100 - pct) / 100;
+          const remainingDays = Math.max(1, Math.ceil(workDaysNeeded * remainingFraction));
+          const pushed = addWorkingDays(today, remainingDays - 1);
+          if (pushed > finish) finish = pushed;
+        }
 
         finishMap[node.id] = finish;
         if (personId) personNext[personId] = addWorkingDays(finish, 1);
@@ -905,7 +920,10 @@ export default function App() {
     const min = all.reduce((m, t) => (t.start < m ? t.start : m), all[0].start);
     const max = all.reduce((m, t) => (t.finish > m ? t.finish : m), all[0].finish);
     const total = Math.max(daysBetween(min, max), 1);
-    const labels = total <= 60 ? getDaysInRange(min, max) : [];
+    // Always show intermediate dates, spaced so labels don't overlap
+    const allDays = getDaysInRange(min, max);
+    const step = total <= 14 ? 1 : total <= 40 ? 2 : total <= 90 ? 5 : 10;
+    const labels = allDays.filter((_, i) => i % step === 0 || i === allDays.length - 1);
     return { minDate: min, maxDate: max, totalDays: total, dayLabels: labels };
   }, [filteredScheduled]);
 
@@ -1013,6 +1031,9 @@ export default function App() {
                 minZoom={0.05}
                 maxZoom={2}
                 fitView
+                deleteKeyCode={null}
+                selectionKeyCode={null}
+                multiSelectionKeyCode={null}
                 {...({} as any)}
               >
                 <Background />
@@ -1148,6 +1169,23 @@ export default function App() {
             <div style={{ display: 'flex', marginBottom: 4, fontSize: 10, color: '#666' }}>
               <div style={{ width: 160, flexShrink: 0 }} />
               <div style={{ flex: 1, position: 'relative', height: dayLabels.length > 0 ? 28 : 20, overflow: 'visible', paddingRight: 32 }}>
+                {dayLabels.map((d) => {
+                  const left = (daysBetween(minDate, d) / totalDays) * 100;
+                  return (
+                    <div
+                      key={'hdr-line-' + d}
+                      style={{
+                        position: 'absolute',
+                        left: `${left}%`,
+                        top: 18,
+                        bottom: -6,
+                        width: 1,
+                        background: d === today ? '#ef4444' : '#e2e8f0',
+                        zIndex: 0,
+                      }}
+                    />
+                  );
+                })}
                 {dayLabels.length > 0 ? (
                   dayLabels.map((d, i) => (
                     <span
@@ -1182,6 +1220,24 @@ export default function App() {
                     </div>
                   </div>
                   <div style={{ flex: 1, position: 'relative', height: 36, background: '#f8fafc', border: '1px solid #e2e8f0', borderRadius: 4, marginRight: 32 }}>
+                    {dayLabels.map((d) => {
+                      const left = (daysBetween(minDate, d) / totalDays) * 100;
+                      return (
+                        <div
+                          key={'grid-' + d}
+                          style={{
+                            position: 'absolute',
+                            left: `${left}%`,
+                            top: 0,
+                            bottom: 0,
+                            width: 1,
+                            background: d === today ? '#ef4444' : '#cbd5e1',
+                            zIndex: 0,
+                            pointerEvents: 'none',
+                          }}
+                        />
+                      );
+                    })}
                     {tasks.map((t, i) => {
                       const leftPct = (daysBetween(minDate, t.start) / totalDays) * 100;
                       const widthPct = Math.max((daysBetween(t.start, t.finish) / totalDays) * 100, 1.5);
