@@ -699,13 +699,6 @@ export default function App() {
     );
   };
 
-  const getTaskAllocation = (node: Node<TaskData> | undefined): number => {
-    if (!node) return 1;
-    if (node.data.allocation != null && node.data.allocation > 0) return node.data.allocation;
-    const person = people.find((p) => p.id === getEffectivePerson(node.id));
-    return person?.defaultAllocation ?? 1;
-  };
-
   const selectedNode = nodes.find((n) => n.id === selectedId);
 
   const scheduledTasks: ScheduledTask[] = useMemo(() => {
