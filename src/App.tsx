@@ -68,6 +68,7 @@ type TaskData = {
   percentComplete?: number;
   templateId?: string;
   notes?: string;
+  allocation?: number; // 0-1, overrides person's default for this task
 };
 type ScheduledTask = {
   id: string;
@@ -566,7 +567,11 @@ export default function App() {
         const hours = getLiveHours(t);
         const person = people.find((p) => p.id === personId);
         if (!rate || !hours || !person) return sum;
-        return sum + rate * hours * (person.defaultAllocation ?? 1);
+        const taskNode = nodes.find((n) => n.id === t.id);
+      const alloc = taskNode?.data.allocation != null && taskNode.data.allocation > 0
+        ? taskNode.data.allocation
+        : (person.defaultAllocation ?? 1);
+      return sum + rate * hours * alloc;
       }, 0);
   }, [nodes, people, departments, getEffectivePerson, getLiveHours]);
 
@@ -682,6 +687,20 @@ export default function App() {
     );
   };
 
+  const setAllocation = (nodeId: string, alloc: number | undefined) => {
+    pushHistory();
+    setNodes((nds) =>
+      nds.map((n) => (n.id === nodeId ? { ...n, data: { ...n.data, allocation: alloc } } : n))
+    );
+  };
+
+  const getTaskAllocation = (node: Node<TaskData> | undefined): number => {
+    if (!node) return 1;
+    if (node.data.allocation != null && node.data.allocation > 0) return node.data.allocation;
+    const person = people.find((p) => p.id === getEffectivePerson(node.id));
+    return person?.defaultAllocation ?? 1;
+  };
+
   const selectedNode = nodes.find((n) => n.id === selectedId);
 
   const scheduledTasks: ScheduledTask[] = useMemo(() => {
@@ -763,7 +782,9 @@ export default function App() {
         }
 
         const hours = getLiveHours(node);
-        const alloc = person?.defaultAllocation ?? 1;
+        const alloc = node.data.allocation != null && node.data.allocation > 0
+          ? node.data.allocation
+          : (person?.defaultAllocation ?? 1);
         const workDaysNeeded = Math.max(Math.ceil(hours / (8 * Math.max(alloc, 0.1))), 1);
         const finish = addWorkingDays(start, workDaysNeeded - 1);
 
@@ -1035,6 +1056,22 @@ export default function App() {
                       placeholder="Status notes..."
                       style={{ width: '100%', height: 80, margin: '4px 0 12px', resize: 'vertical' }}
                     />
+                    <label>Task Allocation % (overrides person default)</label>
+                    <input
+                      type="number"
+                      min="1"
+                      max="100"
+                      step="1"
+                      value={selectedNode.data.allocation != null ? Math.round(selectedNode.data.allocation * 100) : ''}
+                      onChange={(e) => {
+                        const v = e.target.value;
+                        setAllocation(selectedId, v === '' ? undefined : Math.max(1, Math.min(100, Number(v))) / 100);
+                      }}
+                      onMouseDown={stopKey}
+                      onKeyDown={stopKey}
+                      placeholder={`default ${Math.round((people.find((p) => p.id === getEffectivePerson(selectedId))?.defaultAllocation ?? 1) * 100)}%`}
+                      style={{ width: '100%', margin: '4px 0 12px' }}
+                    />
                   </>
                 )}
                 <label>Assign Person</label>
@@ -1217,6 +1254,21 @@ export default function App() {
                       {people.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
                     </select>
                   </div>
+                  <div>
+                    <label style={{ fontSize: 12, display: 'block' }}>Alloc %</label>
+                    <input
+                      type="number"
+                      min="1"
+                      max="100"
+                      value={nodes.find((n) => n.id === selectedId)?.data.allocation != null ? Math.round((nodes.find((n) => n.id === selectedId)?.data.allocation ?? 0) * 100) : ''}
+                      onChange={(e) => {
+                        const v = e.target.value;
+                        setAllocation(selectedId, v === '' ? undefined : Math.max(1, Math.min(100, Number(v))) / 100);
+                      }}
+                      placeholder="def"
+                      style={{ width: 70 }}
+                    />
+                  </div>
                   <div style={{ flex: 1, minWidth: 200 }}>
                     <label style={{ fontSize: 12, display: 'block' }}>Notes</label>
                     <input
@@ -1269,6 +1321,7 @@ export default function App() {
                     <th style={{ textAlign: 'left', padding: 6 }}>Person</th>
                     <th style={{ textAlign: 'right', padding: 6 }}>Hours</th>
                     <th style={{ textAlign: 'right', padding: 6 }}>%</th>
+                    <th style={{ textAlign: 'right', padding: 6 }}>Alloc %</th>
                     <th style={{ textAlign: 'left', padding: 6 }}>Notes</th>
                     <th style={{ textAlign: 'left', padding: 6 }}>Start</th>
                     <th style={{ textAlign: 'left', padding: 6 }}>Finish</th>
@@ -1302,6 +1355,20 @@ export default function App() {
                             max="100"
                             value={node?.data.percentComplete ?? 0}
                             onChange={(e) => setPercent(t.id, Number(e.target.value))}
+                            style={{ width: 60, textAlign: 'right' }}
+                          />
+                        </td>
+                        <td style={{ padding: 6, textAlign: 'right' }}>
+                          <input
+                            type="number"
+                            min="1"
+                            max="100"
+                            value={node?.data.allocation != null ? Math.round(node.data.allocation * 100) : ''}
+                            onChange={(e) => {
+                              const v = e.target.value;
+                              setAllocation(t.id, v === '' ? undefined : Math.max(1, Math.min(100, Number(v))) / 100);
+                            }}
+                            placeholder="def"
                             style={{ width: 60, textAlign: 'right' }}
                           />
                         </td>
